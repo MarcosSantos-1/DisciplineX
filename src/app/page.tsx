@@ -5,6 +5,7 @@ import { MonthlyCalendar } from "@/components/MonthlyCalendar";
 import { MealChecklist } from "@/components/MealChecklist";
 import { DailyChecklist } from "@/components/DailyChecklist";
 import { AddSpecialCheckModal } from "@/components/AddSpecialCheckModal";
+import { FastingTracker } from "@/components/FastingTracker";
 import { useRouter } from "next/navigation";
 import { useState, useEffect, useMemo } from "react";
 import { 
@@ -426,6 +427,9 @@ export default function Home() {
             setSpecialCheckDate(selectedDate);
           }}
         />
+
+        {/* Rastreador de Jejum */}
+        <FastingTracker date={selectedDate} />
 
         {/* Nutrição / refeições */}
         <MealChecklist selectedDate={selectedDate} />

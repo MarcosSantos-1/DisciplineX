@@ -1,17 +1,28 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { ACTIVITY_TEMPLATES, ActivityTemplate } from "@/types/meals";
+
+type ExerciseType = "strength" | "cardio" | "custom";
 
 type Exercise = {
   id: string;
   name: string;
+  type: ExerciseType;
   sets: number;
   reps: string;
-  rest: number;
+  rest: number; // segundos - obrigatório para todos
   completed: boolean;
+  // Para exercícios de força
   weight?: number;
+  // Para exercícios de cardio
   minutes?: number;
-  averageSpeed?: number;
+  averageSpeed?: number; // km/h
+  intensity?: string; // leve, moderado, intenso
+  // Para templates de atividade
+  activityTemplateId?: string;
+  // Vídeo do YouTube
+  videoUrl?: string;
 };
 
 type WorkoutDay = {
@@ -55,15 +66,52 @@ export default function TreinoConfigPage() {
 
   const currentWorkout = workouts.get(selectedDay);
 
-  const handleAddExercise = () => {
-    const newExercise: Exercise = {
-      id: Date.now().toString(),
-      name: "",
-      sets: 3,
-      reps: "10",
-      rest: 60,
-      completed: false,
-    };
+  const [showAddExerciseModal, setShowAddExerciseModal] = useState(false);
+  const [newExerciseType, setNewExerciseType] = useState<ExerciseType>("strength");
+
+  const handleAddExercise = (type: ExerciseType = "strength", templateId?: string) => {
+    let newExercise: Exercise;
+
+    if (templateId) {
+      // Adicionar exercício a partir de template
+      const template = ACTIVITY_TEMPLATES.find((t) => t.id === templateId);
+      if (!template) return;
+
+      newExercise = {
+        id: Date.now().toString(),
+        name: template.name,
+        type: "cardio",
+        sets: 1,
+        reps: "",
+        rest: 30, // Descanso padrão para cardio
+        completed: false,
+        minutes: 30,
+        activityTemplateId: templateId,
+        intensity: template.category === "walking" ? "leve" : template.category === "cycling" ? "moderado" : "intenso",
+      };
+    } else if (type === "cardio") {
+      newExercise = {
+        id: Date.now().toString(),
+        name: "",
+        type: "cardio",
+        sets: 1,
+        reps: "",
+        rest: 30, // Descanso padrão para cardio
+        completed: false,
+        minutes: 30,
+        intensity: "moderado",
+      };
+    } else {
+      newExercise = {
+        id: Date.now().toString(),
+        name: "",
+        type: "strength",
+        sets: 3,
+        reps: "10",
+        rest: 60,
+        completed: false,
+      };
+    }
 
     const updated = new Map(workouts);
     const workout = updated.get(selectedDay) || {
@@ -79,6 +127,7 @@ export default function TreinoConfigPage() {
     updated.set(selectedDay, workout);
     setWorkouts(updated);
     saveWorkouts(updated);
+    setShowAddExerciseModal(false);
   };
 
   const handleUpdateExercise = (exerciseId: string, updates: Partial<Exercise>) => {
@@ -194,7 +243,7 @@ export default function TreinoConfigPage() {
               Exercícios
             </h3>
             <button
-              onClick={handleAddExercise}
+              onClick={() => setShowAddExerciseModal(true)}
               className="rounded-lg bg-jagger-600 px-3 py-1.5 text-xs font-medium text-zinc-50 transition-colors hover:bg-jagger-500"
             >
               + Adicionar
@@ -211,77 +260,305 @@ export default function TreinoConfigPage() {
                 key={exercise.id}
                 className="rounded-2xl border border-zinc-800/80 bg-zinc-950/60 p-4 space-y-3"
               >
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div>
-                    <label className="text-[10px] text-zinc-400 mb-1 block">
-                      Nome do Exercício
-                    </label>
-                    <input
-                      type="text"
-                      value={exercise.name}
-                      onChange={(e) =>
-                        handleUpdateExercise(exercise.id, { name: e.target.value })
-                      }
-                      placeholder="Ex: Supino Reto"
-                      className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 focus:border-jagger-400/60 focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] text-zinc-400 mb-1 block">
-                      Séries
-                    </label>
-                    <input
-                      type="number"
-                      value={exercise.sets}
-                      onChange={(e) =>
-                        handleUpdateExercise(exercise.id, {
-                          sets: Number(e.target.value),
-                        })
-                      }
-                      className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 focus:border-jagger-400/60 focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] text-zinc-400 mb-1 block">
-                      Repetições
-                    </label>
-                    <input
-                      type="text"
-                      value={exercise.reps}
-                      onChange={(e) =>
-                        handleUpdateExercise(exercise.id, { reps: e.target.value })
-                      }
-                      placeholder="Ex: 10-12"
-                      className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 focus:border-jagger-400/60 focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] text-zinc-400 mb-1 block">
-                      Descanso (segundos)
-                    </label>
-                    <input
-                      type="number"
-                      value={exercise.rest}
-                      onChange={(e) =>
-                        handleUpdateExercise(exercise.id, {
-                          rest: Number(e.target.value),
-                        })
-                      }
-                      className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 focus:border-jagger-400/60 focus:outline-none"
-                    />
-                  </div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full ${
+                    exercise.type === "strength" 
+                      ? "bg-blue-500/20 text-blue-300"
+                      : exercise.type === "cardio"
+                      ? "bg-green-500/20 text-green-300"
+                      : "bg-purple-500/20 text-purple-300"
+                  }`}>
+                    {exercise.type === "strength" ? "💪 Força" : exercise.type === "cardio" ? "🏃 Cardio" : "📝 Personalizado"}
+                  </span>
+                  <button
+                    onClick={() => handleDeleteExercise(exercise.id)}
+                    className="text-zinc-500 hover:text-red-400 text-xs"
+                  >
+                    ✕
+                  </button>
                 </div>
-                <button
-                  onClick={() => handleDeleteExercise(exercise.id)}
-                  className="w-full rounded-lg border border-red-500/50 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/20"
-                >
-                  Excluir Exercício
-                </button>
+
+                {exercise.type === "strength" ? (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div className="sm:col-span-2">
+                      <label className="text-[10px] text-zinc-400 mb-1 block">
+                        Nome do Exercício
+                      </label>
+                      <input
+                        type="text"
+                        value={exercise.name}
+                        onChange={(e) =>
+                          handleUpdateExercise(exercise.id, { name: e.target.value })
+                        }
+                        placeholder="Ex: Supino Reto"
+                        className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 focus:border-jagger-400/60 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-zinc-400 mb-1 block">
+                        Séries
+                      </label>
+                      <input
+                        type="number"
+                        value={exercise.sets}
+                        onChange={(e) =>
+                          handleUpdateExercise(exercise.id, {
+                            sets: Number(e.target.value),
+                          })
+                        }
+                        className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 focus:border-jagger-400/60 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-zinc-400 mb-1 block">
+                        Repetições
+                      </label>
+                      <input
+                        type="text"
+                        value={exercise.reps}
+                        onChange={(e) =>
+                          handleUpdateExercise(exercise.id, { reps: e.target.value })
+                        }
+                        placeholder="Ex: 10-12"
+                        className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 focus:border-jagger-400/60 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-zinc-400 mb-1 block">
+                        Peso (kg)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.5"
+                        value={exercise.weight || ""}
+                        onChange={(e) =>
+                          handleUpdateExercise(exercise.id, {
+                            weight: e.target.value ? Number(e.target.value) : undefined,
+                          })
+                        }
+                        placeholder="Opcional"
+                        className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 focus:border-jagger-400/60 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-zinc-400 mb-1 block">
+                        Descanso (segundos)
+                      </label>
+                      <input
+                        type="number"
+                        value={exercise.rest}
+                        onChange={(e) =>
+                          handleUpdateExercise(exercise.id, {
+                            rest: Number(e.target.value),
+                          })
+                        }
+                        className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 focus:border-jagger-400/60 focus:outline-none"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="text-[10px] text-zinc-400 mb-1 block">
+                        URL do Vídeo (YouTube)
+                      </label>
+                      <input
+                        type="url"
+                        value={exercise.videoUrl || ""}
+                        onChange={(e) =>
+                          handleUpdateExercise(exercise.id, {
+                            videoUrl: e.target.value || undefined,
+                          })
+                        }
+                        placeholder="https://www.youtube.com/watch?v=..."
+                        className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 focus:border-jagger-400/60 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div className="sm:col-span-2">
+                      <label className="text-[10px] text-zinc-400 mb-1 block">
+                        Nome da Atividade
+                      </label>
+                      <input
+                        type="text"
+                        value={exercise.name}
+                        onChange={(e) =>
+                          handleUpdateExercise(exercise.id, { name: e.target.value })
+                        }
+                        placeholder="Ex: Caminhada rápida"
+                        className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 focus:border-jagger-400/60 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-zinc-400 mb-1 block">
+                        Duração (minutos)
+                      </label>
+                      <input
+                        type="number"
+                        value={exercise.minutes || ""}
+                        onChange={(e) =>
+                          handleUpdateExercise(exercise.id, {
+                            minutes: e.target.value ? Number(e.target.value) : undefined,
+                          })
+                        }
+                        className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 focus:border-jagger-400/60 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-zinc-400 mb-1 block">
+                        Velocidade Média (km/h)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={exercise.averageSpeed || ""}
+                        onChange={(e) =>
+                          handleUpdateExercise(exercise.id, {
+                            averageSpeed: e.target.value ? Number(e.target.value) : undefined,
+                          })
+                        }
+                        placeholder="Opcional"
+                        className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 focus:border-jagger-400/60 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-zinc-400 mb-1 block">
+                        Descanso (segundos)
+                      </label>
+                      <input
+                        type="number"
+                        value={exercise.rest}
+                        onChange={(e) =>
+                          handleUpdateExercise(exercise.id, {
+                            rest: Number(e.target.value),
+                          })
+                        }
+                        className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 focus:border-jagger-400/60 focus:outline-none"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="text-[10px] text-zinc-400 mb-1 block">
+                        Intensidade
+                      </label>
+                      <select
+                        value={exercise.intensity || "moderado"}
+                        onChange={(e) =>
+                          handleUpdateExercise(exercise.id, {
+                            intensity: e.target.value,
+                          })
+                        }
+                        className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 focus:border-jagger-400/60 focus:outline-none"
+                      >
+                        <option value="leve">Leve</option>
+                        <option value="moderado">Moderado</option>
+                        <option value="intenso">Intenso</option>
+                      </select>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="text-[10px] text-zinc-400 mb-1 block">
+                        URL do Vídeo (YouTube)
+                      </label>
+                      <input
+                        type="url"
+                        value={exercise.videoUrl || ""}
+                        onChange={(e) =>
+                          handleUpdateExercise(exercise.id, {
+                            videoUrl: e.target.value || undefined,
+                          })
+                        }
+                        placeholder="https://www.youtube.com/watch?v=..."
+                        className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 focus:border-jagger-400/60 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             ))
           )}
         </div>
       </section>
+
+      {/* Modal para adicionar exercício */}
+      {showAddExerciseModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="glass-panel w-full max-w-md rounded-3xl p-6">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-zinc-50">
+                Adicionar Exercício
+              </h3>
+              <button
+                onClick={() => setShowAddExerciseModal(false)}
+                className="rounded-lg p-1 text-zinc-400 hover:text-zinc-100"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs text-zinc-400 mb-2 block">
+                  Tipo de Exercício
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => setNewExerciseType("strength")}
+                    className={`rounded-xl border px-4 py-2 text-sm font-medium transition-colors ${
+                      newExerciseType === "strength"
+                        ? "border-jagger-400 bg-jagger-500/20 text-jagger-300"
+                        : "border-zinc-700/80 bg-zinc-950/60 text-zinc-400 hover:border-zinc-600"
+                    }`}
+                  >
+                    💪 Força
+                  </button>
+                  <button
+                    onClick={() => setNewExerciseType("cardio")}
+                    className={`rounded-xl border px-4 py-2 text-sm font-medium transition-colors ${
+                      newExerciseType === "cardio"
+                        ? "border-jagger-400 bg-jagger-500/20 text-jagger-300"
+                        : "border-zinc-700/80 bg-zinc-950/60 text-zinc-400 hover:border-zinc-600"
+                    }`}
+                  >
+                    🏃 Cardio
+                  </button>
+                </div>
+              </div>
+
+              {newExerciseType === "cardio" && (
+                <div>
+                  <label className="text-xs text-zinc-400 mb-2 block">
+                    Atividades Rápidas
+                  </label>
+                  <div className="max-h-48 overflow-y-auto space-y-1">
+                    {ACTIVITY_TEMPLATES.map((template) => (
+                      <button
+                        key={template.id}
+                        onClick={() => handleAddExercise("cardio", template.id)}
+                        className="w-full rounded-lg border border-zinc-700/80 bg-zinc-950/60 px-3 py-2 text-left text-xs text-zinc-300 hover:border-jagger-400/60 hover:bg-zinc-900/60 transition-colors"
+                      >
+                        {template.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowAddExerciseModal(false)}
+                  className="flex-1 rounded-xl border border-zinc-700/80 bg-zinc-950/60 px-4 py-2.5 text-sm font-medium text-zinc-300 transition-colors hover:border-zinc-600 hover:text-zinc-100"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={() => handleAddExercise(newExerciseType)}
+                  className="flex-1 rounded-xl bg-jagger-600 px-4 py-2.5 text-sm font-medium text-zinc-50 transition-colors hover:bg-jagger-500"
+                >
+                  Adicionar {newExerciseType === "strength" ? "Força" : "Cardio"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

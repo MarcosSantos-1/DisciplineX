@@ -27,12 +27,18 @@ function getDaysInMonth(year: number, month: number): Date[] {
 type Exercise = {
   id: string;
   name: string;
-  sets: string;
+  sets: string | number;
   completed: boolean;
   weight?: number;
   minutes?: number;
   averageSpeed?: number;
-  videoUrl?: string;
+  videoUrl?: string; // URL do YouTube
+  // Novos campos da página de ajustes
+  type?: "strength" | "cardio" | "custom";
+  rest?: number; // segundos - obrigatório
+  reps?: string;
+  intensity?: string;
+  activityTemplateId?: string;
 };
 
 type WorkoutDay = {
@@ -205,6 +211,61 @@ const mockWorkoutsByDay: Record<string, { muscleGroup: string; exercises: Omit<E
   },
 };
 
+// Componente para exibir vídeo do YouTube
+function VideoPlayer({ url }: { url: string }) {
+  const [showVideo, setShowVideo] = useState(false);
+  
+  // Extrair ID do vídeo do YouTube
+  const getYouTubeVideoId = (url: string): string | null => {
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
+    const match = url.match(regExp);
+    return match && match[2].length === 11 ? match[2] : null;
+  };
+
+  const videoId = getYouTubeVideoId(url);
+  
+  if (!videoId) {
+    return (
+      <div className="rounded-xl border border-red-500/50 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+        URL do YouTube inválida
+      </div>
+    );
+  }
+
+  if (!showVideo) {
+    return (
+      <button
+        onClick={() => setShowVideo(true)}
+        className="flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-300 hover:border-jagger-400/60 hover:text-jagger-100 transition-colors"
+      >
+        <span>▶️</span>
+        <span>Ver vídeo do YouTube</span>
+      </button>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="relative w-full overflow-hidden rounded-xl" style={{ paddingBottom: "56.25%" }}>
+        <iframe
+          className="absolute top-0 left-0 h-full w-full"
+          src={`https://www.youtube.com/embed/${videoId}`}
+          title="YouTube video player"
+          frameBorder="0"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allowFullScreen
+        />
+      </div>
+      <button
+        onClick={() => setShowVideo(false)}
+        className="w-full rounded-lg border border-zinc-700/80 bg-zinc-950/60 px-3 py-2 text-xs text-zinc-400 hover:border-zinc-600 hover:text-zinc-200 transition-colors"
+      >
+        Fechar vídeo
+      </button>
+    </div>
+  );
+}
+
 function ExerciseCard({
   exercise,
   onComplete,
@@ -214,10 +275,10 @@ function ExerciseCard({
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [weight, setWeight] = useState<string>("");
-  const [minutes, setMinutes] = useState<string>("");
-  const [averageSpeed, setAverageSpeed] = useState<string>("");
+  const [minutes, setMinutes] = useState<string>(exercise.minutes?.toString() || "");
+  const [averageSpeed, setAverageSpeed] = useState<string>(exercise.averageSpeed?.toString() || "");
 
-  const isCardio = exercise.name.includes("🚶") || exercise.name.includes("🏃") || exercise.name.toLowerCase().includes("cardio");
+  const isCardio = exercise.type === "cardio" || exercise.name.includes("🚶") || exercise.name.includes("🏃") || exercise.name.toLowerCase().includes("cardio") || exercise.minutes !== undefined;
 
   const handleComplete = () => {
     if (isCardio) {
@@ -259,7 +320,10 @@ function ExerciseCard({
               {exercise.name}
             </p>
             <p className="mt-0.5 text-[11px] text-zinc-400 sm:text-xs">
-              {exercise.sets}
+              {typeof exercise.sets === "number" && exercise.reps 
+                ? `${exercise.sets}x${exercise.reps}` 
+                : exercise.sets}
+              {exercise.rest && ` • ${exercise.rest}s descanso`}
               {exercise.completed && (
                 <>
                   {exercise.weight && (
@@ -284,10 +348,7 @@ function ExerciseCard({
       {isOpen && !exercise.completed && (
         <div className="border-t border-zinc-800/80 px-3 py-2.5 space-y-2.5 sm:px-4 sm:py-3 sm:space-y-3">
           {exercise.videoUrl && (
-            <button className="flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-300 hover:border-jagger-400/60 hover:text-jagger-100 transition-colors">
-              <span>▶️</span>
-              <span>Ver vídeo / GIF</span>
-            </button>
+            <VideoPlayer url={exercise.videoUrl} />
           )}
 
           {isCardio ? (
@@ -375,46 +436,53 @@ export default function TreinoPage() {
       const dateKey = date.toISOString().split("T")[0];
       const dateISO = date.toISOString();
 
-      // Primeiro, verificar se há treino salvo no localStorage
-      const saved = localStorage.getItem(`workout_${dateKey}`);
-      if (saved) {
+      // Primeiro, verificar se há treino específico da data salvo
+      const savedDateWorkout = localStorage.getItem(`workout_${dateKey}`);
+      let workoutForDate: WorkoutDay | null = null;
+      
+      if (savedDateWorkout) {
         try {
-          const savedWorkout = JSON.parse(saved);
-          // Garantir que a data está correta
-          savedWorkout.date = date;
-          initialWorkouts.set(dateISO, savedWorkout);
+          const parsed = JSON.parse(savedDateWorkout);
+          parsed.date = date;
+          workoutForDate = parsed;
         } catch (e) {
-          console.error("Erro ao carregar treino salvo:", e);
-          // Se der erro, criar treino padrão
-          const workoutData = mockWorkoutsByDay[dayName];
-          if (workoutData) {
-            initialWorkouts.set(dateISO, {
-              date,
-              dayOfWeek: dayName,
-              dayLabel: dayName.charAt(0).toUpperCase() + dayName.slice(1),
-              muscleGroup: workoutData.muscleGroup,
-              exercises: workoutData.exercises.map((ex) => ({
-                ...ex,
-                completed: false,
-              })),
-              isWeekend,
-            });
-          } else if (dayOfWeek === 0) {
-            initialWorkouts.set(dateISO, {
-              date,
-              dayOfWeek: dayName,
-              dayLabel: "Domingo",
-              muscleGroup: "Descanso",
-              exercises: [],
-              isWeekend: true,
-            });
+          console.error("Erro ao carregar treino da data:", e);
+        }
+      }
+
+      // Se não tem treino específico da data, carregar da configuração semanal
+      if (!workoutForDate) {
+        const savedConfig = localStorage.getItem("workout_config");
+        if (savedConfig) {
+          try {
+            const config = JSON.parse(savedConfig);
+            const dayConfig = config[dayName];
+            if (dayConfig && dayConfig.exercises && dayConfig.exercises.length > 0) {
+              workoutForDate = {
+                date,
+                dayOfWeek: dayName,
+                dayLabel: dayConfig.dayLabel || dayName.charAt(0).toUpperCase() + dayName.slice(1),
+                muscleGroup: dayConfig.muscleGroup || "",
+                exercises: dayConfig.exercises.map((ex: any) => ({
+                  ...ex,
+                  completed: false, // Resetar completado para o novo dia
+                  // Garantir que sets seja string se for número
+                  sets: typeof ex.sets === "number" ? ex.sets.toString() : ex.sets,
+                })),
+                isWeekend: dayConfig.isWeekend || isWeekend,
+              };
+            }
+          } catch (e) {
+            console.error("Erro ao carregar configuração:", e);
           }
         }
-      } else {
-        // Se não há treino salvo, criar treino padrão
+      }
+
+      // Se ainda não tem, usar mock padrão
+      if (!workoutForDate) {
         const workoutData = mockWorkoutsByDay[dayName];
         if (workoutData) {
-          initialWorkouts.set(dateISO, {
+          workoutForDate = {
             date,
             dayOfWeek: dayName,
             dayLabel: dayName.charAt(0).toUpperCase() + dayName.slice(1),
@@ -424,18 +492,21 @@ export default function TreinoPage() {
               completed: false,
             })),
             isWeekend,
-          });
+          };
         } else if (dayOfWeek === 0) {
-          // Domingo - descanso
-          initialWorkouts.set(dateISO, {
+          workoutForDate = {
             date,
             dayOfWeek: dayName,
             dayLabel: "Domingo",
             muscleGroup: "Descanso",
             exercises: [],
             isWeekend: true,
-          });
+          };
         }
+      }
+
+      if (workoutForDate) {
+        initialWorkouts.set(dateISO, workoutForDate);
       }
     });
 
