@@ -14,7 +14,7 @@ type CircularChartProps = {
   calories: {
     consumed: number;
     limit: number;
-    burned: number;
+    burned: number; // Gasto total do dia (TMB + atividades)
   };
   macros: {
     protein: MacroData;
@@ -144,16 +144,16 @@ export function CircularChart({ calories, macros }: CircularChartProps) {
             <p className="text-[10px] text-zinc-500">kcal</p>
           </div>
           <div className="rounded-2xl bg-zinc-950/60 px-2 py-2 text-center">
-            <p className="text-[10px] text-zinc-400">Consumido</p>
+            <p className="text-[10px] text-zinc-400">🔥 Consumido</p>
             <p className="mt-0.5 text-base font-semibold text-amber-300">
               {calories.consumed.toLocaleString()}
             </p>
             <p className="text-[10px] text-zinc-500">kcal</p>
           </div>
           <div className="rounded-2xl bg-zinc-950/60 px-2 py-2 text-center">
-            <p className="text-[10px] text-zinc-400">Gasto</p>
+            <p className="text-[10px] text-zinc-400">⚡ Gasto Total</p>
             <p className="mt-0.5 text-base font-semibold text-emerald-300">
-              {calories.burned}
+              {calories.burned.toLocaleString()}
             </p>
             <p className="text-[10px] text-zinc-500">kcal</p>
           </div>

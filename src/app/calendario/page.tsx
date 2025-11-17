@@ -1,52 +1,8 @@
 "use client";
 
-import { useState } from "react";
-
-type ChecklistItem = {
-  id: string;
-  label: string;
-  enabled: boolean;
-  weight: "high" | "medium" | "low";
-  daysOfWeek: number[]; // 0 = domingo, 1 = segunda, etc.
-};
-
-const mockChecklistItems: ChecklistItem[] = [
-  {
-    id: "1",
-    label: "Treino concluído",
-    enabled: true,
-    weight: "high",
-    daysOfWeek: [1, 2, 3, 4, 5], // Segunda a Sexta
-  },
-  {
-    id: "2",
-    label: "Sem doces/processados",
-    enabled: true,
-    weight: "high",
-    daysOfWeek: [0, 1, 2, 3, 4, 5, 6], // Todos os dias
-  },
-  {
-    id: "3",
-    label: "8h de sono",
-    enabled: true,
-    weight: "high",
-    daysOfWeek: [0, 1, 2, 3, 4, 5, 6], // Todos os dias
-  },
-  {
-    id: "4",
-    label: "Hidratou (2L+)",
-    enabled: true,
-    weight: "medium",
-    daysOfWeek: [0, 1, 2, 3, 4, 5, 6], // Todos os dias
-  },
-  {
-    id: "5",
-    label: "Jejuou conforme protocolo",
-    enabled: false,
-    weight: "medium",
-    daysOfWeek: [1, 3, 5], // Segunda, Quarta, Sexta
-  },
-];
+import { useState, useEffect } from "react";
+import { DailyChecklist } from "@/components/DailyChecklist";
+import { AddSpecialCheckModal } from "@/components/AddSpecialCheckModal";
 
 function getDaysInMonth(year: number, month: number): Date[] {
   const firstDay = new Date(year, month, 1);
@@ -61,17 +17,40 @@ function getDaysInMonth(year: number, month: number): Date[] {
 }
 
 function getDayScore(date: Date): number | null {
-  // Mock - depois virá do Firebase
-  const day = date.getDate();
-  if (day % 3 === 0) return 88;
-  if (day % 3 === 1) return 62;
+  // Carregar score do checklist do dia
+  const dateKey = date.toISOString().split("T")[0];
+  const saved = localStorage.getItem(`daily_checklist_${dateKey}`);
+  if (saved) {
+    try {
+      const parsed = JSON.parse(saved);
+      return parsed.score || null;
+    } catch (e) {
+      console.error("Erro ao carregar score:", e);
+    }
+  }
   return null;
 }
 
+function hasSpecialCheck(date: Date): boolean {
+  const dateKey = date.toISOString().split("T")[0];
+  try {
+    const saved = localStorage.getItem(`special_checks_${dateKey}`);
+    if (saved) {
+      const checks = JSON.parse(saved);
+      return checks && checks.length > 0;
+    }
+  } catch (e) {
+    return false;
+  }
+  return false;
+}
+
 export default function CalendarioPage() {
+  const today = new Date();
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [checklistItems, setChecklistItems] = useState(mockChecklistItems);
-  const [selectedItem, setSelectedItem] = useState<ChecklistItem | null>(null);
+  const [selectedDate, setSelectedDate] = useState<Date>(today);
+  const [showSpecialCheckModal, setShowSpecialCheckModal] = useState(false);
+  const [specialCheckDate, setSpecialCheckDate] = useState<Date>(today);
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
@@ -94,14 +73,6 @@ export default function CalendarioPage() {
       }
       return newDate;
     });
-  };
-
-  const toggleChecklistItem = (id: string) => {
-    setChecklistItems((prev) =>
-      prev.map((item) =>
-        item.id === id ? { ...item, enabled: !item.enabled } : item
-      )
-    );
   };
 
   const isToday = (date: Date) => {
@@ -159,26 +130,50 @@ export default function CalendarioPage() {
               {day}
             </div>
           ))}
+          {/* Espaços vazios antes do primeiro dia do mês para alinhar com o dia da semana correto */}
+          {days.length > 0 && (() => {
+            const firstDayOfWeek = days[0].getDay();
+            const emptyCells = [];
+            for (let i = 0; i < firstDayOfWeek; i++) {
+              emptyCells.push(
+                <div key={`empty-${i}`} className="flex flex-col items-center justify-center rounded-xl border border-transparent p-2 text-xs" />
+              );
+            }
+            return emptyCells;
+          })()}
           {days.map((date) => {
             const score = getDayScore(date);
             const today = isToday(date);
             const dayOfWeek = date.getDay();
+            const specialCheck = hasSpecialCheck(date);
+            const hasScore = score !== null && score !== undefined;
+            const isCompleted = hasScore && score! >= 80;
+            const isIncomplete = hasScore && score! < 80;
+            
+            // Borda amarela apenas se tem missão especial E não tem score ainda
+            const useYellowBorder = specialCheck && !hasScore;
 
             return (
               <button
                 key={date.toISOString()}
-                className={`flex flex-col items-center justify-center rounded-xl border p-2 text-xs transition-all ${
+                onClick={() => setSelectedDate(date)}
+                className={`flex flex-col items-center justify-center rounded-xl border p-2 text-xs transition-all relative ${
                   today
                     ? "bg-jagger-800/80 border-jagger-400/60 shadow-2xl"
-                    : score !== null
-                    ? score >= 80
-                      ? "bg-emerald-500/10 border-emerald-500/40"
-                      : "bg-red-500/10 border-red-500/40"
+                    : useYellowBorder
+                    ? "bg-zinc-900/60 border-2 border-yellow-400/60"
+                    : isCompleted
+                    ? "bg-emerald-500/10 border-emerald-500/40"
+                    : isIncomplete
+                    ? "bg-red-500/10 border-red-500/40"
                     : "bg-zinc-950/40 border-zinc-800/80 hover:bg-zinc-900/60"
                 }`}
               >
-                <span className={`font-semibold ${today ? "text-jagger-50" : "text-zinc-100"}`}>
+                <span className={`font-semibold flex items-center gap-1 ${today ? "text-jagger-50" : "text-zinc-100"}`}>
                   {date.getDate()}
+                  {specialCheck && (
+                    <span className="text-yellow-400 text-[10px]">⭐</span>
+                  )}
                 </span>
                 {score !== null && (
                   <span
@@ -195,65 +190,32 @@ export default function CalendarioPage() {
         </div>
       </section>
 
-      {/* Configuração de Checklist */}
-      <section className="glass-panel rounded-3xl p-4">
-        <div className="mb-4 flex items-center justify-between">
-          <div>
-            <h3 className="text-sm font-medium text-zinc-100">
-              Configuração de Checklist
-            </h3>
-            <p className="mt-0.5 text-xs text-zinc-400">
-              Defina quais perguntas aparecem em cada dia da semana.
-            </p>
-          </div>
-        </div>
-
-        <div className="space-y-2.5">
-          {checklistItems.map((item) => (
-            <div
-              key={item.id}
-              className="flex items-center justify-between rounded-2xl border border-zinc-800/80 bg-zinc-950/60 px-3 py-2.5"
-            >
-              <div className="flex flex-1 items-center gap-3">
-                <input
-                  type="checkbox"
-                  checked={item.enabled}
-                  onChange={() => toggleChecklistItem(item.id)}
-                  className="h-4 w-4 rounded border-zinc-600 bg-zinc-900 text-emerald-400 accent-emerald-400"
-                />
-                <div className="flex-1">
-                  <p className="text-xs font-medium text-zinc-100">
-                    {item.label}
-                  </p>
-                  <p className="mt-0.5 text-[10px] text-zinc-500">
-                    {item.daysOfWeek.length === 7
-                      ? "Todos os dias"
-                      : `${item.daysOfWeek.length} dias/semana`}
-                    {" • "}
-                    Peso:{" "}
-                    {item.weight === "high"
-                      ? "Alto"
-                      : item.weight === "medium"
-                      ? "Médio"
-                      : "Baixo"}
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setSelectedItem(item)}
-                className="rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-2 py-1 text-[10px] text-zinc-300 hover:border-jagger-400/60 hover:text-jagger-100 transition-colors"
-              >
-                Editar
-              </button>
-            </div>
-          ))}
-        </div>
-
-        <button className="mt-3 w-full rounded-xl border border-dashed border-zinc-700 px-3 py-2 text-xs text-zinc-400 hover:border-jagger-400/60 hover:text-jagger-100 transition-colors">
-          + Adicionar nova pergunta
-        </button>
+      {/* Checklist do dia selecionado */}
+      <section className="grid flex-1 gap-3 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1.1fr)]">
+        <DailyChecklist 
+          date={selectedDate} 
+          onScoreChange={(score) => {
+            // Score atualizado automaticamente pelo componente
+          }}
+          onAddSpecialCheck={() => {
+            setShowSpecialCheckModal(true);
+            setSpecialCheckDate(selectedDate);
+          }}
+        />
       </section>
+
+      {/* Modal para adicionar check especial */}
+      {showSpecialCheckModal && (
+        <AddSpecialCheckModal
+          date={specialCheckDate}
+          onClose={() => setShowSpecialCheckModal(false)}
+          onAdd={() => {
+            // Forçar atualização do calendário
+            setShowSpecialCheckModal(false);
+            // O calendário será atualizado automaticamente quando o componente re-renderizar
+          }}
+        />
+      )}
     </div>
   );
 }
-

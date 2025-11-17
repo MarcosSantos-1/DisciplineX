@@ -187,6 +187,7 @@ export function RecipeForm({ recipe, onSave, onCancel }: RecipeFormProps) {
       carbs,
       fat,
       tags,
+      type: "recipe",
       createdAt: recipe?.createdAt || new Date().toISOString(),
     };
 
@@ -215,8 +216,9 @@ export function RecipeForm({ recipe, onSave, onCancel }: RecipeFormProps) {
             {/* Informações básicas */}
             <div className="grid gap-4 md:grid-cols-2">
               <div>
-                <label className="mb-2 block text-sm font-medium text-zinc-300">
-                  Nome da Receita *
+                <label className="mb-2 flex items-center gap-2 text-sm font-medium text-zinc-300">
+                  <span>🍽️</span>
+                  <span>Nome da Receita *</span>
                 </label>
                 <input
                   type="text"
@@ -227,21 +229,24 @@ export function RecipeForm({ recipe, onSave, onCancel }: RecipeFormProps) {
                 />
               </div>
               <div>
-                <label className="mb-2 block text-sm font-medium text-zinc-300">
-                  Tempo de Preparo (min)
+                <label className="mb-2 flex items-center gap-2 text-sm font-medium text-zinc-300">
+                  <span>⏱️</span>
+                  <span>Tempo de Preparo (min)</span>
                 </label>
                 <input
                   type="number"
                   value={prepTime}
                   onChange={(e) => setPrepTime(Number(e.target.value))}
                   className="w-full rounded-xl border border-zinc-700 bg-zinc-950/60 px-4 py-2 text-sm text-zinc-100 focus:border-emerald-500/50 focus:outline-none"
+                  placeholder="30"
                 />
               </div>
             </div>
 
             <div>
-              <label className="mb-2 block text-sm font-medium text-zinc-300">
-                Descrição
+              <label className="mb-2 flex items-center gap-2 text-sm font-medium text-zinc-300">
+                <span>📝</span>
+                <span>Descrição</span>
               </label>
               <textarea
                 value={description}
@@ -253,22 +258,59 @@ export function RecipeForm({ recipe, onSave, onCancel }: RecipeFormProps) {
             </div>
 
             <div>
-              <label className="mb-2 block text-sm font-medium text-zinc-300">
-                URL da Imagem
+              <label className="mb-2 flex items-center gap-2 text-sm font-medium text-zinc-300">
+                <span>🖼️</span>
+                <span>Imagem</span>
               </label>
-              <input
-                type="url"
-                value={image}
-                onChange={(e) => setImage(e.target.value)}
-                className="w-full rounded-xl border border-zinc-700 bg-zinc-950/60 px-4 py-2 text-sm text-zinc-100 focus:border-emerald-500/50 focus:outline-none"
-                placeholder="https://exemplo.com/imagem.jpg"
-              />
+              <div className="space-y-2">
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setImage("")}
+                    className={`rounded-xl border px-4 py-2 text-sm font-medium transition-colors ${
+                      !image || image.startsWith("http")
+                        ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-300"
+                        : "border-zinc-700 bg-zinc-950/60 text-zinc-400 hover:border-zinc-600"
+                    }`}
+                  >
+                    🔗 URL
+                  </button>
+                  <button
+                    type="button"
+                    disabled
+                    className="rounded-xl border border-zinc-700 bg-zinc-950/60 px-4 py-2 text-sm font-medium text-zinc-500 opacity-50 cursor-not-allowed"
+                    title="Em breve: upload de imagens"
+                  >
+                    📤 Upload (em breve)
+                  </button>
+                </div>
+                <input
+                  type="url"
+                  value={image}
+                  onChange={(e) => setImage(e.target.value)}
+                  className="w-full rounded-xl border border-zinc-700 bg-zinc-950/60 px-4 py-2 text-sm text-zinc-100 focus:border-emerald-500/50 focus:outline-none"
+                  placeholder="https://exemplo.com/imagem.jpg"
+                />
+                {image && (
+                  <div className="mt-2 rounded-xl overflow-hidden border border-zinc-700">
+                    <img
+                      src={image}
+                      alt="Preview"
+                      className="w-full h-32 object-cover"
+                      onError={(e) => {
+                        e.currentTarget.style.display = "none";
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Ingredientes */}
             <div>
-              <label className="mb-2 block text-sm font-medium text-zinc-300">
-                Ingredientes *
+              <label className="mb-2 flex items-center gap-2 text-sm font-medium text-zinc-300">
+                <span>🥘</span>
+                <span>Ingredientes *</span>
               </label>
               <div className="space-y-2">
                 {ingredients.map((ing, idx) => (
@@ -288,78 +330,82 @@ export function RecipeForm({ recipe, onSave, onCancel }: RecipeFormProps) {
                   </div>
                 ))}
               </div>
-              <div className="mt-3 grid gap-2 md:grid-cols-4">
-                <input
-                  type="text"
-                  value={ingredientName}
-                  onChange={(e) => setIngredientName(e.target.value)}
-                  placeholder="Nome"
-                  className="rounded-xl border border-zinc-700 bg-zinc-950/60 px-3 py-2 text-xs text-zinc-100 focus:border-emerald-500/50 focus:outline-none"
-                />
-                <input
-                  type="text"
-                  value={ingredientQuantity}
-                  onChange={(e) => setIngredientQuantity(e.target.value)}
-                  placeholder="Quantidade"
-                  className="rounded-xl border border-zinc-700 bg-zinc-950/60 px-3 py-2 text-xs text-zinc-100 focus:border-emerald-500/50 focus:outline-none"
-                />
-                <input
-                  type="number"
-                  value={ingredientCalories}
-                  onChange={(e) => setIngredientCalories(Number(e.target.value))}
-                  placeholder="Calorias"
-                  className="rounded-xl border border-zinc-700 bg-zinc-950/60 px-3 py-2 text-xs text-zinc-100 focus:border-emerald-500/50 focus:outline-none"
-                />
-                <button
-                  onClick={handleAddIngredient}
-                  className="rounded-xl bg-emerald-500/20 px-3 py-2 text-xs font-medium text-emerald-300 hover:bg-emerald-500/30"
-                >
-                  + Adicionar
-                </button>
-              </div>
-              <div className="mt-2 grid gap-2 md:grid-cols-3">
-                <input
-                  type="number"
-                  value={ingredientProtein}
-                  onChange={(e) => setIngredientProtein(Number(e.target.value))}
-                  placeholder="Proteína (g)"
-                  className="rounded-xl border border-zinc-700 bg-zinc-950/60 px-3 py-2 text-xs text-zinc-100 focus:border-emerald-500/50 focus:outline-none"
-                />
-                <input
-                  type="number"
-                  value={ingredientCarbs}
-                  onChange={(e) => setIngredientCarbs(Number(e.target.value))}
-                  placeholder="Carboidratos (g)"
-                  className="rounded-xl border border-zinc-700 bg-zinc-950/60 px-3 py-2 text-xs text-zinc-100 focus:border-emerald-500/50 focus:outline-none"
-                />
-                <input
-                  type="number"
-                  value={ingredientFat}
-                  onChange={(e) => setIngredientFat(Number(e.target.value))}
-                  placeholder="Gorduras (g)"
-                  className="rounded-xl border border-zinc-700 bg-zinc-950/60 px-3 py-2 text-xs text-zinc-100 focus:border-emerald-500/50 focus:outline-none"
-                />
+              <div className="mt-3 space-y-2">
+                <div className="grid gap-2 md:grid-cols-4">
+                  <input
+                    type="text"
+                    value={ingredientName}
+                    onChange={(e) => setIngredientName(e.target.value)}
+                    placeholder="Nome do ingrediente"
+                    className="rounded-xl border border-zinc-700 bg-zinc-950/60 px-3 py-2 text-xs text-zinc-100 focus:border-emerald-500/50 focus:outline-none"
+                  />
+                  <input
+                    type="text"
+                    value={ingredientQuantity}
+                    onChange={(e) => setIngredientQuantity(e.target.value)}
+                    placeholder="Quantidade (ex: 150g)"
+                    className="rounded-xl border border-zinc-700 bg-zinc-950/60 px-3 py-2 text-xs text-zinc-100 focus:border-emerald-500/50 focus:outline-none"
+                  />
+                  <input
+                    type="number"
+                    value={ingredientCalories}
+                    onChange={(e) => setIngredientCalories(Number(e.target.value))}
+                    placeholder="🔥 Calorias"
+                    className="rounded-xl border border-zinc-700 bg-zinc-950/60 px-3 py-2 text-xs text-zinc-100 focus:border-emerald-500/50 focus:outline-none"
+                  />
+                  <button
+                    onClick={handleAddIngredient}
+                    className="rounded-xl bg-emerald-500/20 px-3 py-2 text-xs font-medium text-emerald-300 hover:bg-emerald-500/30 transition-colors"
+                  >
+                    ➕ Adicionar
+                  </button>
+                </div>
+                <div className="grid gap-2 md:grid-cols-3">
+                  <input
+                    type="number"
+                    value={ingredientProtein}
+                    onChange={(e) => setIngredientProtein(Number(e.target.value))}
+                    placeholder="🥩 Proteína (g)"
+                    className="rounded-xl border border-zinc-700 bg-zinc-950/60 px-3 py-2 text-xs text-zinc-100 focus:border-emerald-500/50 focus:outline-none"
+                  />
+                  <input
+                    type="number"
+                    value={ingredientCarbs}
+                    onChange={(e) => setIngredientCarbs(Number(e.target.value))}
+                    placeholder="🍚 Carboidratos (g)"
+                    className="rounded-xl border border-zinc-700 bg-zinc-950/60 px-3 py-2 text-xs text-zinc-100 focus:border-emerald-500/50 focus:outline-none"
+                  />
+                  <input
+                    type="number"
+                    value={ingredientFat}
+                    onChange={(e) => setIngredientFat(Number(e.target.value))}
+                    placeholder="🧈 Gorduras (g)"
+                    className="rounded-xl border border-zinc-700 bg-zinc-950/60 px-3 py-2 text-xs text-zinc-100 focus:border-emerald-500/50 focus:outline-none"
+                  />
+                </div>
               </div>
             </div>
 
             {/* Modo de preparo */}
             <div>
-              <label className="mb-2 block text-sm font-medium text-zinc-300">
-                Modo de Preparo
+              <label className="mb-2 flex items-center gap-2 text-sm font-medium text-zinc-300">
+                <span>👨‍🍳</span>
+                <span>Modo de Preparo</span>
               </label>
               <div className="space-y-2">
                 {instructions.map((inst, idx) => (
                   <div
                     key={idx}
-                    className="flex items-start gap-2 rounded-xl bg-zinc-950/60 p-3"
+                    className="flex items-start gap-3 rounded-xl bg-zinc-950/60 p-3"
                   >
-                    <span className="flex-shrink-0 text-sm font-semibold text-emerald-400">
-                      {idx + 1}.
+                    <span className="flex-shrink-0 flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500/20 text-xs font-semibold text-emerald-400">
+                      {idx + 1}
                     </span>
                     <span className="flex-1 text-sm text-zinc-300">{inst}</span>
                     <button
                       onClick={() => handleRemoveInstruction(idx)}
-                      className="text-red-400 hover:text-red-300"
+                      className="flex-shrink-0 text-red-400 hover:text-red-300 transition-colors"
+                      title="Remover passo"
                     >
                       ✕
                     </button>
@@ -386,8 +432,9 @@ export function RecipeForm({ recipe, onSave, onCancel }: RecipeFormProps) {
 
             {/* Tags */}
             <div>
-              <label className="mb-2 block text-sm font-medium text-zinc-300">
-                Tags
+              <label className="mb-2 flex items-center gap-2 text-sm font-medium text-zinc-300">
+                <span>🏷️</span>
+                <span>Tags</span>
               </label>
               <div className="mb-2 flex flex-wrap gap-2">
                 {tags.map((tag) => (
@@ -424,34 +471,39 @@ export function RecipeForm({ recipe, onSave, onCancel }: RecipeFormProps) {
             </div>
 
             {/* Resumo de macros */}
-            <div className="rounded-xl bg-zinc-950/60 p-4">
-              <h3 className="mb-3 text-sm font-semibold text-zinc-300">
-                Resumo Nutricional
+            <div className="rounded-xl bg-gradient-to-br from-zinc-950/80 to-zinc-900/60 border border-zinc-800 p-4">
+              <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-zinc-300">
+                <span>📊</span>
+                <span>Resumo Nutricional</span>
               </h3>
               <div className="grid grid-cols-4 gap-4">
-                <div className="text-center">
-                  <p className="text-xs text-zinc-400">Calorias</p>
-                  <p className="mt-1 text-lg font-semibold text-emerald-300">
+                <div className="text-center rounded-xl bg-zinc-900/60 p-3">
+                  <p className="text-xs text-zinc-400 mb-1">🔥 Calorias</p>
+                  <p className="text-lg font-semibold text-emerald-300">
                     {totalCalories}
                   </p>
+                  <p className="text-[10px] text-zinc-500 mt-0.5">kcal</p>
                 </div>
-                <div className="text-center">
-                  <p className="text-xs text-zinc-400">Proteína</p>
-                  <p className="mt-1 text-lg font-semibold text-red-300">
+                <div className="text-center rounded-xl bg-zinc-900/60 p-3">
+                  <p className="text-xs text-zinc-400 mb-1">🥩 Proteína</p>
+                  <p className="text-lg font-semibold text-red-300">
                     {protein}g
                   </p>
+                  <p className="text-[10px] text-zinc-500 mt-0.5">gramas</p>
                 </div>
-                <div className="text-center">
-                  <p className="text-xs text-zinc-400">Carboidratos</p>
-                  <p className="mt-1 text-lg font-semibold text-blue-300">
+                <div className="text-center rounded-xl bg-zinc-900/60 p-3">
+                  <p className="text-xs text-zinc-400 mb-1">🍚 Carboidratos</p>
+                  <p className="text-lg font-semibold text-blue-300">
                     {carbs}g
                   </p>
+                  <p className="text-[10px] text-zinc-500 mt-0.5">gramas</p>
                 </div>
-                <div className="text-center">
-                  <p className="text-xs text-zinc-400">Gorduras</p>
-                  <p className="mt-1 text-lg font-semibold text-yellow-300">
+                <div className="text-center rounded-xl bg-zinc-900/60 p-3">
+                  <p className="text-xs text-zinc-400 mb-1">🧈 Gorduras</p>
+                  <p className="text-lg font-semibold text-yellow-300">
                     {fat}g
                   </p>
+                  <p className="text-[10px] text-zinc-500 mt-0.5">gramas</p>
                 </div>
               </div>
             </div>
