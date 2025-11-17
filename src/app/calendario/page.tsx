@@ -17,6 +17,9 @@ function getDaysInMonth(year: number, month: number): Date[] {
 }
 
 function getDayScore(date: Date): number | null {
+  // Verificar se estamos no navegador
+  if (typeof window === "undefined") return null;
+  
   // Carregar score do checklist do dia
   const dateKey = date.toISOString().split("T")[0];
   const saved = localStorage.getItem(`daily_checklist_${dateKey}`);
@@ -32,6 +35,9 @@ function getDayScore(date: Date): number | null {
 }
 
 function hasSpecialCheck(date: Date): boolean {
+  // Verificar se estamos no navegador
+  if (typeof window === "undefined") return false;
+  
   const dateKey = date.toISOString().split("T")[0];
   try {
     const saved = localStorage.getItem(`special_checks_${dateKey}`);

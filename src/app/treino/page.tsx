@@ -355,6 +355,9 @@ export default function TreinoPage() {
   const [activities, setActivities] = useState<PhysicalActivity[]>([]);
 
   useEffect(() => {
+    // Verificar se estamos no navegador
+    if (typeof window === "undefined") return;
+    
     const currentDate = new Date();
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
@@ -443,6 +446,9 @@ export default function TreinoPage() {
 
   // Carregar atividades quando a data muda
   useEffect(() => {
+    // Verificar se estamos no navegador
+    if (typeof window === "undefined") return;
+    
     const dateKey = selectedDate.toISOString().split("T")[0];
     const saved = localStorage.getItem(`activities_${dateKey}`);
     if (saved) {
@@ -612,6 +618,9 @@ export default function TreinoPage() {
         }))}
         onDayClick={setSelectedDate}
         getDayStatus={(date) => {
+          // Verificar se estamos no navegador
+          if (typeof window === "undefined") return null;
+          
           // Carregar do localStorage para garantir que está atualizado
           const dateKey = date.toISOString().split("T")[0];
           const saved = localStorage.getItem(`workout_${dateKey}`);

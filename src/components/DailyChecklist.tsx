@@ -340,7 +340,11 @@ export function DailyChecklist({ date, onScoreChange, onAddSpecialCheck }: Daily
           </p>
         </div>
         <button 
-          onClick={() => window.location.href = "/perfil?tab=checklist-config"}
+          onClick={() => {
+            if (typeof window !== "undefined") {
+              window.location.href = "/perfil?tab=checklist-config";
+            }
+          }}
           className="rounded-full border border-zinc-700/80 bg-zinc-950/60 px-3 py-1 text-[11px] text-zinc-300 hover:border-jagger-400/60 hover:text-jagger-100"
         >
           Ajustar perguntas

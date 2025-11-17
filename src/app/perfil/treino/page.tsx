@@ -30,6 +30,9 @@ export default function TreinoConfigPage() {
   const dayNames = ["segunda", "terca", "quarta", "quinta", "sexta", "sabado"];
 
   useEffect(() => {
+    // Verificar se estamos no navegador
+    if (typeof window === "undefined") return;
+    
     // Carregar treinos salvos
     const saved = localStorage.getItem("workout_config");
     if (saved) {
@@ -119,6 +122,9 @@ export default function TreinoConfigPage() {
   };
 
   const saveWorkouts = (workoutsToSave: Map<string, WorkoutDay>) => {
+    // Verificar se estamos no navegador
+    if (typeof window === "undefined") return;
+    
     const config: Record<string, any> = {};
     workoutsToSave.forEach((workout, day) => {
       config[day] = {

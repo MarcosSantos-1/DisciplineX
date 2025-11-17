@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useSearchParams } from "next/navigation";
+import { useState, useEffect, Suspense } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { ChecklistConfig } from "@/components/ChecklistConfig";
 import { calculateBMR, UserProfile, PhysicalActivity } from "@/types/meals";
 
@@ -255,8 +255,9 @@ function WeightModal({
   );
 }
 
-export default function PerfilPage() {
+function PerfilPageContent() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   
   // Verificar se veio da página de configuração de checklist
   const initialTab = searchParams.get("tab") === "checklist-config" 
@@ -1093,7 +1094,7 @@ export default function PerfilPage() {
             </button>
 
             <button 
-              onClick={() => window.location.href = "/perfil/treino"}
+              onClick={() => router.push("/perfil/treino")}
               className="flex flex-col items-start gap-2 rounded-2xl border border-zinc-800/80 bg-zinc-950/60 p-4 text-left hover:border-jagger-400/60 hover:bg-zinc-900/60 transition-colors"
             >
               <div className="flex items-center gap-2">
@@ -1106,7 +1107,7 @@ export default function PerfilPage() {
             </button>
 
             <button 
-              onClick={() => window.location.href = "/perfil/jejum"}
+              onClick={() => router.push("/perfil/jejum")}
               className="flex flex-col items-start gap-2 rounded-2xl border border-zinc-800/80 bg-zinc-950/60 p-4 text-left hover:border-jagger-400/60 hover:bg-zinc-900/60 transition-colors"
             >
               <div className="flex items-center gap-2">
@@ -1155,5 +1156,17 @@ export default function PerfilPage() {
         includeDate={false}
       />
     </div>
+  );
+}
+
+export default function PerfilPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex flex-1 items-center justify-center">
+        <div className="text-zinc-400">Carregando...</div>
+      </div>
+    }>
+      <PerfilPageContent />
+    </Suspense>
   );
 }

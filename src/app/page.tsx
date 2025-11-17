@@ -29,6 +29,9 @@ function getDaysInMonth(year: number, month: number): Date[] {
 }
 
 function getDayScore(date: Date): number | null {
+  // Verificar se estamos no navegador
+  if (typeof window === "undefined") return null;
+  
   // Carregar score do checklist do dia
   const dateKey = date.toISOString().split("T")[0];
   const saved = localStorage.getItem(`daily_checklist_${dateKey}`);
@@ -64,6 +67,9 @@ const BASAL_METABOLIC_RATE = calculateBMR(USER_PROFILE);
 
 // Calcular gasto total do dia (TMB + atividades)
 function calculateDailyExpenditure(dateKey: string): number {
+  // Verificar se estamos no navegador
+  if (typeof window === "undefined") return BASAL_METABOLIC_RATE;
+  
   // Carregar atividades do localStorage (depois virá do Firebase)
   const saved = localStorage.getItem(`activities_${dateKey}`);
   let activities: PhysicalActivity[] = [];
@@ -107,6 +113,9 @@ function calculateNutritionFromMeals(
 
   // Função para obter opções customizadas de um slot
   const getCustomOptions = (slotId: string): any[] => {
+    // Verificar se estamos no navegador
+    if (typeof window === "undefined") return [];
+    
     const saved = localStorage.getItem(`custom_options_${slotId}`);
     if (saved) {
       try {
@@ -208,6 +217,9 @@ export default function Home() {
   // Função para ler refeições diretamente do localStorage (fonte de verdade)
   const loadMealsFromStorage = useMemo(() => {
     return () => {
+      // Verificar se estamos no navegador
+      if (typeof window === "undefined") return [];
+      
       const saved = localStorage.getItem(`meals_${dateKey}`);
       if (saved) {
         try {
@@ -225,6 +237,22 @@ export default function Home() {
   // Recalcular nutrição sempre que selectedMeals ou dateKey mudar
   // SEMPRE ler do localStorage para garantir sincronização
   const nutrition = useMemo(() => {
+    // Verificar se estamos no navegador
+    if (typeof window === "undefined") {
+      return {
+        calories: {
+          consumed: 0,
+          limit: DAILY_CALORIE_GOAL,
+          burned: BASAL_METABOLIC_RATE,
+        },
+        macros: {
+          protein: { label: "Proteína", consumed: 0, limit: DAILY_PROTEIN_GOAL, color: "red", gradient: "from-red-400 to-orange-400" },
+          carbs: { label: "Carboidratos", consumed: 0, limit: DAILY_CARBS_GOAL, color: "blue", gradient: "from-blue-400 to-cyan-400" },
+          fat: { label: "Gorduras", consumed: 0, limit: DAILY_FAT_GOAL, color: "yellow", gradient: "from-yellow-400 to-amber-400" },
+        },
+      };
+    }
+    
     // Ler diretamente do localStorage para garantir que está atualizado
     const mealsFromStorage = loadMealsFromStorage();
     console.log("Recalculando nutrição para", dateKey);
@@ -240,6 +268,9 @@ export default function Home() {
   }, [selectedMeals, dateKey, loadMealsFromStorage]);
 
   useEffect(() => {
+    // Verificar se estamos no navegador
+    if (typeof window === "undefined") return;
+    
     const loadDays = () => {
       const currentDate = new Date();
       const year = currentDate.getFullYear();
@@ -268,6 +299,9 @@ export default function Home() {
 
   // Carregar refeições selecionadas quando a data muda ou quando o componente monta
   useEffect(() => {
+    // Verificar se estamos no navegador
+    if (typeof window === "undefined") return;
+    
     const loadMeals = () => {
       const saved = localStorage.getItem(`meals_${dateKey}`);
       console.log("Carregando refeições para", dateKey, ":", saved);
@@ -291,6 +325,9 @@ export default function Home() {
 
   // Escutar mudanças nas refeições através de eventos customizados
   useEffect(() => {
+    // Verificar se estamos no navegador
+    if (typeof window === "undefined") return;
+    
     const handleMealsUpdate = (e: CustomEvent) => {
       console.log("Evento mealsUpdated capturado:", e.detail);
       if (e.detail.dateKey === dateKey) {
@@ -314,6 +351,9 @@ export default function Home() {
 
   // Escutar mudanças nas atividades através de eventos customizados
   useEffect(() => {
+    // Verificar se estamos no navegador
+    if (typeof window === "undefined") return;
+    
     const handleActivitiesUpdate = () => {
       // Forçar re-render para atualizar o gasto calórico recarregando refeições
       const saved = localStorage.getItem(`meals_${dateKey}`);

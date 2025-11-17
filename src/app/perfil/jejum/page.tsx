@@ -51,6 +51,9 @@ export default function JejumConfigPage() {
   const dayNames = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
 
   useEffect(() => {
+    // Verificar se estamos no navegador
+    if (typeof window === "undefined") return;
+    
     // Carregar tipos de jejum salvos
     const savedTypes = localStorage.getItem("fasting_types");
     if (savedTypes) {
@@ -94,6 +97,7 @@ export default function JejumConfigPage() {
 
   const handleAddFastingType = () => {
     if (!newType.name || newType.duration <= 0) return;
+    if (typeof window === "undefined") return;
 
     const type: FastingType = {
       id: Date.now().toString(),
@@ -110,12 +114,16 @@ export default function JejumConfigPage() {
   };
 
   const handleDeleteFastingType = (id: string) => {
+    if (typeof window === "undefined") return;
+    
     const updated = fastingTypes.filter((t) => t.id !== id);
     setFastingTypes(updated);
     localStorage.setItem("fasting_types", JSON.stringify(updated));
   };
 
   const handleUpdateSchedule = (dayOfWeek: number, updates: Partial<FastingSchedule>) => {
+    if (typeof window === "undefined") return;
+    
     const updated = schedule.map((s) =>
       s.dayOfWeek === dayOfWeek ? { ...s, ...updates } : s
     );
