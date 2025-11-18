@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { ChecklistItem, DailyChecklist } from "@/types/meals";
 import { checklistService, workoutService } from "@/lib/firebaseService";
 
@@ -193,13 +193,16 @@ export function DailyChecklist({ date, onScoreChange, onAddSpecialCheck }: Daily
       setItems(allItems);
 
       // Carregar estado salvo do dia do Firebase
-      let initialCheckedIds = new Set<string>();
+      let savedCheckedIds = new Set<string>();
       try {
-        initialCheckedIds = await checklistService.getChecklistState(dateKey);
-        console.log(`[DailyChecklist] Estado carregado para ${dateKey}:`, Array.from(initialCheckedIds));
+        savedCheckedIds = await checklistService.getChecklistState(dateKey);
+        console.log(`[DailyChecklist] Estado carregado do Firebase para ${dateKey}:`, Array.from(savedCheckedIds));
       } catch (e) {
         console.error("Erro ao carregar estado do checklist:", e);
       }
+
+      // Criar um novo Set para não modificar o estado salvo diretamente
+      const initialCheckedIds = new Set(savedCheckedIds);
 
       // Verificar se treino foi completado automaticamente (apenas em dias de semana)
       if (!isWeekend) {
@@ -208,15 +211,21 @@ export function DailyChecklist({ date, onScoreChange, onAddSpecialCheck }: Daily
           const workoutItem = allItems.find(item => item.id === "workout-completed");
           if (workoutItem) {
             initialCheckedIds.add("workout-completed");
+            console.log(`[DailyChecklist] Treino completado detectado, adicionando workout-completed`);
           }
         } else {
-          initialCheckedIds.delete("workout-completed");
+          // Só remover se não estava salvo no Firebase (preservar estado manual)
+          if (!savedCheckedIds.has("workout-completed")) {
+            initialCheckedIds.delete("workout-completed");
+            console.log(`[DailyChecklist] Treino não completado e não estava salvo, removendo workout-completed`);
+          }
         }
       } else {
         // Nos fins de semana, remover "workout-completed" do checkedIds
         initialCheckedIds.delete("workout-completed");
       }
 
+      console.log(`[DailyChecklist] Estado final após processamento para ${dateKey}:`, Array.from(initialCheckedIds));
       setCheckedIds(initialCheckedIds);
     };
 
@@ -266,8 +275,19 @@ export function DailyChecklist({ date, onScoreChange, onAddSpecialCheck }: Daily
 
   // Calcular e salvar score quando mudar (sem disparar eventos que causam loops)
   // NOTA: Este useEffect é um backup. O salvamento principal acontece no handleToggle
+  // Usar useRef para evitar salvamentos desnecessários
+  const lastSavedStateRef = useRef<string>("");
+  
   useEffect(() => {
     if (items.length === 0) return; // Não calcular se não tiver items ainda
+    
+    // Criar uma string única do estado atual para comparar
+    const currentStateString = Array.from(checkedIds).sort().join(",");
+    
+    // Se o estado não mudou desde o último salvamento, não salvar novamente
+    if (lastSavedStateRef.current === currentStateString) {
+      return;
+    }
     
     const saveChecklist = async () => {
       const dayOfWeek = date.getDay();
@@ -281,6 +301,9 @@ export function DailyChecklist({ date, onScoreChange, onAddSpecialCheck }: Daily
         // Salvar checklist completo com score no Firebase
         await checklistService.saveDailyChecklist(dateKey, items, score);
         
+        // Atualizar referência do último estado salvo
+        lastSavedStateRef.current = currentStateString;
+        
         // Notificar mudança de score (sem causar loop)
         if (onScoreChange) {
           onScoreChange(score);
@@ -293,7 +316,7 @@ export function DailyChecklist({ date, onScoreChange, onAddSpecialCheck }: Daily
     // Usar um pequeno delay para evitar múltiplos salvamentos
     const timeoutId = setTimeout(() => {
       saveChecklist();
-    }, 300);
+    }, 500);
 
     return () => clearTimeout(timeoutId);
   }, [checkedIds, items, dateKey, date, onScoreChange]);
@@ -313,6 +336,9 @@ export function DailyChecklist({ date, onScoreChange, onAddSpecialCheck }: Daily
     
     console.log(`[DailyChecklist] Novo estado:`, Array.from(newCheckedIds));
     setCheckedIds(newCheckedIds);
+    
+    // Atualizar referência do último estado salvo
+    lastSavedStateRef.current = Array.from(newCheckedIds).sort().join(",");
     
     // Salvar imediatamente no Firebase
     try {
