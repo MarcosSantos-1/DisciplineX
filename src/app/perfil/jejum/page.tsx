@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { fastingService } from "@/lib/firebaseService";
 
 type FastingType = {
   id: string;
@@ -51,26 +52,39 @@ export default function JejumConfigPage() {
   const dayNames = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
 
   useEffect(() => {
-    // Verificar se estamos no navegador
-    if (typeof window === "undefined") return;
-    
-    // Carregar tipos de jejum salvos
-    const savedTypes = localStorage.getItem("fasting_types");
-    if (savedTypes) {
+    const loadData = async () => {
       try {
-        setFastingTypes(JSON.parse(savedTypes));
-      } catch (e) {
-        console.error("Erro ao carregar tipos de jejum:", e);
-      }
-    }
+        // Carregar tipos de jejum do Firebase
+        const firebaseTypes = await fastingService.getFastingTypes();
+        if (firebaseTypes.length > 0) {
+          setFastingTypes(firebaseTypes);
+        } else {
+          // Se não houver no Firebase, usar padrão e salvar
+          setFastingTypes(DEFAULT_FASTING_TYPES);
+          await fastingService.saveFastingTypes(DEFAULT_FASTING_TYPES);
+        }
 
-    // Carregar cronograma salvo
-    const savedSchedule = localStorage.getItem("fasting_schedule");
-    if (savedSchedule) {
-      try {
-        setSchedule(JSON.parse(savedSchedule));
-      } catch (e) {
-        // Criar cronograma padrão
+        // Carregar cronograma do Firebase
+        const firebaseSchedule = await fastingService.getFastingSchedule();
+        if (firebaseSchedule.length === 7) {
+          setSchedule(firebaseSchedule);
+        } else {
+          // Se não houver no Firebase, criar padrão e salvar
+          const defaultSchedule: FastingSchedule[] = [];
+          for (let i = 0; i < 7; i++) {
+            defaultSchedule.push({
+              dayOfWeek: i,
+              fastingTypeId: null,
+              startTime: "20:00",
+            });
+          }
+          setSchedule(defaultSchedule);
+          await fastingService.saveFastingSchedule(defaultSchedule);
+        }
+      } catch (error) {
+        console.error("Erro ao carregar dados:", error);
+        // Em caso de erro, usar padrões
+        setFastingTypes(DEFAULT_FASTING_TYPES);
         const defaultSchedule: FastingSchedule[] = [];
         for (let i = 0; i < 7; i++) {
           defaultSchedule.push({
@@ -81,23 +95,13 @@ export default function JejumConfigPage() {
         }
         setSchedule(defaultSchedule);
       }
-    } else {
-      // Criar cronograma padrão
-      const defaultSchedule: FastingSchedule[] = [];
-      for (let i = 0; i < 7; i++) {
-        defaultSchedule.push({
-          dayOfWeek: i,
-          fastingTypeId: null,
-          startTime: "20:00",
-        });
-      }
-      setSchedule(defaultSchedule);
-    }
+    };
+
+    loadData();
   }, []);
 
-  const handleAddFastingType = () => {
+  const handleAddFastingType = async () => {
     if (!newType.name || newType.duration <= 0) return;
-    if (typeof window === "undefined") return;
 
     const type: FastingType = {
       id: Date.now().toString(),
@@ -108,27 +112,35 @@ export default function JejumConfigPage() {
 
     const updated = [...fastingTypes, type];
     setFastingTypes(updated);
-    localStorage.setItem("fasting_types", JSON.stringify(updated));
+    try {
+      await fastingService.saveFastingTypes(updated);
+    } catch (error) {
+      console.error("Erro ao salvar tipo de jejum:", error);
+    }
     setNewType({ name: "", duration: 16, description: "" });
     setShowAddTypeModal(false);
   };
 
-  const handleDeleteFastingType = (id: string) => {
-    if (typeof window === "undefined") return;
-    
+  const handleDeleteFastingType = async (id: string) => {
     const updated = fastingTypes.filter((t) => t.id !== id);
     setFastingTypes(updated);
-    localStorage.setItem("fasting_types", JSON.stringify(updated));
+    try {
+      await fastingService.saveFastingTypes(updated);
+    } catch (error) {
+      console.error("Erro ao deletar tipo de jejum:", error);
+    }
   };
 
-  const handleUpdateSchedule = (dayOfWeek: number, updates: Partial<FastingSchedule>) => {
-    if (typeof window === "undefined") return;
-    
+  const handleUpdateSchedule = async (dayOfWeek: number, updates: Partial<FastingSchedule>) => {
     const updated = schedule.map((s) =>
       s.dayOfWeek === dayOfWeek ? { ...s, ...updates } : s
     );
     setSchedule(updated);
-    localStorage.setItem("fasting_schedule", JSON.stringify(updated));
+    try {
+      await fastingService.saveFastingSchedule(updated);
+    } catch (error) {
+      console.error("Erro ao atualizar cronograma:", error);
+    }
   };
 
   const getDaySchedule = (dayOfWeek: number): FastingSchedule => {

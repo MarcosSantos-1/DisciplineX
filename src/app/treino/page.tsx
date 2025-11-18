@@ -11,6 +11,7 @@ import {
   calculateActivityCalories,
   UserProfile
 } from "@/types/meals";
+import { workoutService } from "@/lib/firebaseService";
 
 function getDaysInMonth(year: number, month: number): Date[] {
   const firstDay = new Date(year, month, 1);
@@ -320,10 +321,35 @@ function ExerciseCard({
               {exercise.name}
             </p>
             <p className="mt-0.5 text-[11px] text-zinc-400 sm:text-xs">
-              {typeof exercise.sets === "number" && exercise.reps 
-                ? `${exercise.sets}x${exercise.reps}` 
-                : exercise.sets}
-              {exercise.rest && ` • ${exercise.rest}s descanso`}
+              {isCardio ? (
+                // Para cardio, não mostrar séries/reps, apenas o nome completo
+                exercise.name.includes("🚶") || exercise.name.includes("🏃") || exercise.name.toLowerCase().includes("cardio")
+                  ? "" // Cardio mostra apenas o nome completo no título
+                  : exercise.minutes 
+                    ? `${exercise.minutes} min`
+                    : ""
+              ) : (
+                // Para exercícios de força
+                (() => {
+                  // Se sets é string como "3x12", usar diretamente
+                  if (typeof exercise.sets === "string" && exercise.sets.includes("x")) {
+                    return exercise.sets;
+                  }
+                  // Se sets é número e tem reps, formatar como "3x12"
+                  if (typeof exercise.sets === "number" && exercise.reps) {
+                    return `${exercise.sets}x${exercise.reps}`;
+                  }
+                  // Se sets é string mas não tem "x", usar como está
+                  if (typeof exercise.sets === "string" && exercise.sets) {
+                    return exercise.sets;
+                  }
+                  // Se sets é número mas não tem reps, mostrar apenas o número
+                  if (typeof exercise.sets === "number") {
+                    return exercise.sets.toString();
+                  }
+                  return "";
+                })() + (exercise.rest !== undefined && exercise.rest !== null && exercise.rest >= 0 ? ` • ${exercise.rest}s descanso` : "")
+              )}
               {exercise.completed && (
                 <>
                   {exercise.weight && (
@@ -331,7 +357,7 @@ function ExerciseCard({
                       • {exercise.weight}kg
                     </span>
                   )}
-                  {exercise.minutes && (
+                  {exercise.minutes && !isCardio && (
                     <span className="ml-2 text-emerald-300">
                       • {exercise.minutes}min
                       {exercise.averageSpeed && ` • ${exercise.averageSpeed} km/h`}
@@ -347,7 +373,7 @@ function ExerciseCard({
 
       {isOpen && !exercise.completed && (
         <div className="border-t border-zinc-800/80 px-3 py-2.5 space-y-2.5 sm:px-4 sm:py-3 sm:space-y-3">
-          {exercise.videoUrl && (
+          {exercise.videoUrl && exercise.videoUrl.trim() !== "" && (
             <VideoPlayer url={exercise.videoUrl} />
           )}
 
@@ -416,122 +442,385 @@ export default function TreinoPage() {
   const [activities, setActivities] = useState<PhysicalActivity[]>([]);
 
   useEffect(() => {
-    // Verificar se estamos no navegador
-    if (typeof window === "undefined") return;
-    
-    const currentDate = new Date();
-    const year = currentDate.getFullYear();
-    const month = currentDate.getMonth();
-    const days = getDaysInMonth(year, month);
-    
-    setMonthDays(days.map((date) => ({ date })));
-
-    const initialWorkouts = new Map<string, WorkoutDay>();
-
-    days.forEach((date) => {
-      const dayOfWeek = date.getDay();
-      const dayNames = ["domingo", "segunda", "terca", "quarta", "quinta", "sexta", "sabado"];
-      const dayName = dayNames[dayOfWeek];
-      const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-      const dateKey = date.toISOString().split("T")[0];
-      const dateISO = date.toISOString();
-
-      // Primeiro, verificar se há treino específico da data salvo
-      const savedDateWorkout = localStorage.getItem(`workout_${dateKey}`);
-      let workoutForDate: WorkoutDay | null = null;
+    const loadWorkouts = async () => {
+      const currentDate = new Date();
+      const year = currentDate.getFullYear();
+      const month = currentDate.getMonth();
+      const days = getDaysInMonth(year, month);
       
-      if (savedDateWorkout) {
+      setMonthDays(days.map((date) => ({ date })));
+
+      const initialWorkouts = new Map<string, WorkoutDay>();
+
+      // Carregar configuração semanal do Firebase
+      const firebaseConfig = await workoutService.getWorkoutConfig();
+
+      for (const date of days) {
+        const dayOfWeek = date.getDay();
+        const dayNames = ["domingo", "segunda", "terca", "quarta", "quinta", "sexta", "sabado"];
+        const dayName = dayNames[dayOfWeek];
+        const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+        const dateKey = date.toISOString().split("T")[0];
+        const dateISO = date.toISOString();
+
+        // Primeiro, verificar se há treino específico da data salvo no Firebase
+        let workoutForDate: WorkoutDay | null = null;
+        
         try {
-          const parsed = JSON.parse(savedDateWorkout);
-          parsed.date = date;
-          workoutForDate = parsed;
+          const savedDateWorkout = await workoutService.getWorkout(dateKey);
+          if (savedDateWorkout) {
+            workoutForDate = {
+              ...savedDateWorkout,
+              date,
+              exercises: savedDateWorkout.exercises.map((ex: any) => ({
+                ...ex,
+                rest: ex.rest !== undefined ? ex.rest : 0,
+                videoUrl: ex.videoUrl || undefined,
+                type: ex.type || undefined,
+                reps: ex.reps || undefined,
+                intensity: ex.intensity || undefined,
+                activityTemplateId: ex.activityTemplateId || undefined,
+              })),
+            };
+          }
         } catch (e) {
           console.error("Erro ao carregar treino da data:", e);
         }
+
+        // Se não tem treino específico da data, carregar da configuração semanal
+        if (!workoutForDate && firebaseConfig && firebaseConfig[dayName]) {
+          const dayConfig = firebaseConfig[dayName];
+          if (dayConfig && dayConfig.exercises && Array.isArray(dayConfig.exercises) && dayConfig.exercises.length > 0) {
+            workoutForDate = {
+              date,
+              dayOfWeek: dayName,
+              dayLabel: dayConfig.dayLabel || dayName.charAt(0).toUpperCase() + dayName.slice(1),
+              muscleGroup: dayConfig.muscleGroup || "",
+              exercises: dayConfig.exercises.map((ex: any) => ({
+                id: ex.id || Date.now().toString() + Math.random(),
+                name: ex.name || "",
+                type: ex.type || "strength",
+                sets: typeof ex.sets === "number" ? ex.sets.toString() : (ex.sets || ""),
+                reps: ex.reps || "",
+                rest: ex.rest !== undefined ? ex.rest : (ex.type === "cardio" ? 30 : 60),
+                completed: false, // Resetar completado para o novo dia
+                weight: ex.weight,
+                minutes: ex.minutes,
+                averageSpeed: ex.averageSpeed,
+                videoUrl: ex.videoUrl || undefined,
+                intensity: ex.intensity || undefined,
+                activityTemplateId: ex.activityTemplateId || undefined,
+              })),
+              isWeekend: dayConfig.isWeekend !== undefined ? dayConfig.isWeekend : isWeekend,
+            };
+          }
+        }
+
+        // Se ainda não tem, usar mock padrão
+        if (!workoutForDate) {
+          const workoutData = mockWorkoutsByDay[dayName];
+          if (workoutData) {
+            workoutForDate = {
+              date,
+              dayOfWeek: dayName,
+              dayLabel: dayName.charAt(0).toUpperCase() + dayName.slice(1),
+              muscleGroup: workoutData.muscleGroup,
+              exercises: workoutData.exercises.map((ex) => ({
+                ...ex,
+                completed: false,
+                sets: typeof ex.sets === "string" ? parseInt(ex.sets) || 0 : ex.sets,
+                type: ex.type || (ex.name.includes("🚶") || ex.name.includes("🏃") || ex.name.toLowerCase().includes("cardio") ? "cardio" : "strength"),
+                rest: ex.rest !== undefined ? ex.rest : (ex.type === "cardio" ? 30 : 60),
+              })),
+              isWeekend,
+            };
+          } else if (dayOfWeek === 0) {
+            workoutForDate = {
+              date,
+              dayOfWeek: dayName,
+              dayLabel: "Domingo",
+              muscleGroup: "Descanso",
+              exercises: [],
+              isWeekend: true,
+            };
+          }
+        }
+
+        if (workoutForDate) {
+          initialWorkouts.set(dateISO, workoutForDate);
+        }
       }
 
+      setWorkouts(initialWorkouts);
+      // Garantir que o dia atual está selecionado
+      setSelectedDate(currentDate);
+    };
+
+    loadWorkouts();
+  }, []);
+
+  // Recarregar treinos quando a configuração mudar
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleConfigUpdate = async () => {
+      // Recarregar completamente os treinos do Firebase
+      const currentDate = new Date();
+      const year = currentDate.getFullYear();
+      const month = currentDate.getMonth();
+      const days = getDaysInMonth(year, month);
+      
+      const firebaseConfig = await workoutService.getWorkoutConfig();
+      const updatedWorkouts = new Map<string, WorkoutDay>();
+      
+      for (const date of days) {
+        const dayOfWeek = date.getDay();
+        const dayNames = ["domingo", "segunda", "terca", "quarta", "quinta", "sexta", "sabado"];
+        const dayName = dayNames[dayOfWeek];
+        const dateKey = date.toISOString().split("T")[0];
+        const dateISO = date.toISOString();
+        
+        // Primeiro verificar se há treino específico da data
+        let workoutForDate: WorkoutDay | null = null;
+        try {
+          const savedDateWorkout = await workoutService.getWorkout(dateKey);
+          if (savedDateWorkout) {
+            workoutForDate = {
+              ...savedDateWorkout,
+              date,
+              exercises: savedDateWorkout.exercises.map((ex: any) => ({
+                ...ex,
+                rest: ex.rest !== undefined ? ex.rest : 0,
+                videoUrl: ex.videoUrl || undefined,
+                type: ex.type || undefined,
+                reps: ex.reps || undefined,
+                intensity: ex.intensity || undefined,
+                activityTemplateId: ex.activityTemplateId || undefined,
+              })),
+            };
+          }
+        } catch (e) {
+          console.error("Erro ao carregar treino da data:", e);
+        }
+        
+        // Se não tem treino específico, usar configuração semanal
+        if (!workoutForDate && firebaseConfig && firebaseConfig[dayName]) {
+          const dayConfig = firebaseConfig[dayName];
+          if (dayConfig && dayConfig.exercises && Array.isArray(dayConfig.exercises) && dayConfig.exercises.length > 0) {
+            workoutForDate = {
+              date,
+              dayOfWeek: dayName,
+              dayLabel: dayConfig.dayLabel || dayName.charAt(0).toUpperCase() + dayName.slice(1),
+              muscleGroup: dayConfig.muscleGroup || "",
+              exercises: dayConfig.exercises.map((ex: any) => ({
+                id: ex.id || Date.now().toString() + Math.random(),
+                name: ex.name || "",
+                type: ex.type || "strength",
+                sets: typeof ex.sets === "number" ? ex.sets : (typeof ex.sets === "string" ? parseInt(ex.sets) || 0 : 0),
+                reps: ex.reps || "",
+                rest: ex.rest !== undefined ? ex.rest : (ex.type === "cardio" ? 30 : 60),
+                completed: false,
+                weight: ex.weight,
+                minutes: ex.minutes,
+                averageSpeed: ex.averageSpeed,
+                videoUrl: ex.videoUrl || undefined,
+                intensity: ex.intensity || undefined,
+                activityTemplateId: ex.activityTemplateId || undefined,
+              })),
+              isWeekend: dayConfig.isWeekend !== undefined ? dayConfig.isWeekend : (dayOfWeek === 0 || dayOfWeek === 6),
+            };
+          }
+        }
+        
+        // Se ainda não tem, usar mock padrão
+        if (!workoutForDate) {
+          const workoutData = mockWorkoutsByDay[dayName];
+          if (workoutData) {
+            workoutForDate = {
+              date,
+              dayOfWeek: dayName,
+              dayLabel: dayName.charAt(0).toUpperCase() + dayName.slice(1),
+              muscleGroup: workoutData.muscleGroup,
+              exercises: workoutData.exercises.map((ex) => ({
+                ...ex,
+                completed: false,
+                sets: typeof ex.sets === "string" ? parseInt(ex.sets) || 0 : ex.sets,
+              })),
+              isWeekend: dayOfWeek === 0 || dayOfWeek === 6,
+            };
+          } else if (dayOfWeek === 0) {
+            workoutForDate = {
+              date,
+              dayOfWeek: dayName,
+              dayLabel: "Domingo",
+              muscleGroup: "Descanso",
+              exercises: [],
+              isWeekend: true,
+            };
+          }
+        }
+        
+        if (workoutForDate) {
+          updatedWorkouts.set(dateISO, workoutForDate);
+        }
+      }
+      
+      setWorkouts(updatedWorkouts);
+    };
+
+    window.addEventListener("workoutConfigUpdated", handleConfigUpdate);
+    return () => {
+      window.removeEventListener("workoutConfigUpdated", handleConfigUpdate);
+    };
+  }, []);
+
+  // Recarregar treino quando a data selecionada mudar
+  useEffect(() => {
+    const loadWorkoutForDate = async () => {
+      const dateKey = selectedDate.toISOString().split("T")[0];
+      const dateISO = selectedDate.toISOString();
+      const dayOfWeek = selectedDate.getDay();
+      const dayNames = ["domingo", "segunda", "terca", "quarta", "quinta", "sexta", "sabado"];
+      const dayName = dayNames[dayOfWeek];
+      
+      // Verificar se há treino específico da data no Firebase
+      let workoutForDate: WorkoutDay | null = null;
+      
+      try {
+        const savedDateWorkout = await workoutService.getWorkout(dateKey);
+        if (savedDateWorkout) {
+          workoutForDate = {
+            ...savedDateWorkout,
+            date: selectedDate,
+            exercises: savedDateWorkout.exercises.map((ex: any) => {
+              // Se sets é número e reps existe, reconstruir como string "3x12"
+              let setsValue: string | number = ex.sets || "";
+              if (typeof ex.sets === "number" && ex.reps) {
+                setsValue = `${ex.sets}x${ex.reps}`;
+              } else if (typeof ex.sets === "number") {
+                setsValue = ex.sets;
+              } else if (typeof ex.sets === "string") {
+                setsValue = ex.sets;
+              }
+              
+              return {
+                ...ex,
+                sets: setsValue,
+                rest: ex.rest !== undefined ? ex.rest : 0,
+                videoUrl: ex.videoUrl || undefined,
+                type: ex.type || undefined,
+                reps: ex.reps || undefined,
+                intensity: ex.intensity || undefined,
+                activityTemplateId: ex.activityTemplateId || undefined,
+              };
+            }),
+          };
+        }
+      } catch (e) {
+        console.error("Erro ao carregar treino da data:", e);
+      }
+      
       // Se não tem treino específico da data, carregar da configuração semanal
       if (!workoutForDate) {
-        const savedConfig = localStorage.getItem("workout_config");
-        if (savedConfig) {
-          try {
-            const config = JSON.parse(savedConfig);
-            const dayConfig = config[dayName];
-            if (dayConfig && dayConfig.exercises && dayConfig.exercises.length > 0) {
+        try {
+          const firebaseConfig = await workoutService.getWorkoutConfig();
+          if (firebaseConfig && firebaseConfig[dayName]) {
+            const dayConfig = firebaseConfig[dayName];
+            if (dayConfig && dayConfig.exercises && Array.isArray(dayConfig.exercises) && dayConfig.exercises.length > 0) {
               workoutForDate = {
-                date,
+                date: selectedDate,
                 dayOfWeek: dayName,
                 dayLabel: dayConfig.dayLabel || dayName.charAt(0).toUpperCase() + dayName.slice(1),
                 muscleGroup: dayConfig.muscleGroup || "",
-                exercises: dayConfig.exercises.map((ex: any) => ({
-                  ...ex,
-                  completed: false, // Resetar completado para o novo dia
-                  // Garantir que sets seja string se for número
-                  sets: typeof ex.sets === "number" ? ex.sets.toString() : ex.sets,
-                })),
-                isWeekend: dayConfig.isWeekend || isWeekend,
+                exercises: dayConfig.exercises.map((ex: any) => {
+                  // Se sets é número e reps existe, reconstruir como string "3x12"
+                  let setsValue: string | number = ex.sets || "";
+                  if (typeof ex.sets === "number" && ex.reps) {
+                    setsValue = `${ex.sets}x${ex.reps}`;
+                  } else if (typeof ex.sets === "number") {
+                    setsValue = ex.sets;
+                  } else if (typeof ex.sets === "string") {
+                    setsValue = ex.sets;
+                  }
+                  
+                  return {
+                    id: ex.id || Date.now().toString() + Math.random(),
+                    name: ex.name || "",
+                    type: ex.type || "strength",
+                    sets: setsValue,
+                    reps: ex.reps || "",
+                    rest: ex.rest !== undefined ? ex.rest : (ex.type === "cardio" ? 30 : 60),
+                    completed: false,
+                    weight: ex.weight,
+                    minutes: ex.minutes,
+                    averageSpeed: ex.averageSpeed,
+                    videoUrl: ex.videoUrl || undefined,
+                    intensity: ex.intensity || undefined,
+                    activityTemplateId: ex.activityTemplateId || undefined,
+                  };
+                }),
+                isWeekend: dayConfig.isWeekend !== undefined ? dayConfig.isWeekend : (dayOfWeek === 0 || dayOfWeek === 6),
               };
             }
-          } catch (e) {
-            console.error("Erro ao carregar configuração:", e);
           }
+        } catch (e) {
+          console.error("Erro ao carregar configuração:", e);
         }
       }
-
-      // Se ainda não tem, usar mock padrão
-      if (!workoutForDate) {
-        const workoutData = mockWorkoutsByDay[dayName];
-        if (workoutData) {
-          workoutForDate = {
-            date,
-            dayOfWeek: dayName,
-            dayLabel: dayName.charAt(0).toUpperCase() + dayName.slice(1),
-            muscleGroup: workoutData.muscleGroup,
-            exercises: workoutData.exercises.map((ex) => ({
-              ...ex,
-              completed: false,
-            })),
-            isWeekend,
-          };
-        } else if (dayOfWeek === 0) {
-          workoutForDate = {
-            date,
-            dayOfWeek: dayName,
-            dayLabel: "Domingo",
-            muscleGroup: "Descanso",
-            exercises: [],
-            isWeekend: true,
-          };
-        }
+    
+    // Se ainda não tem, usar mock padrão
+    if (!workoutForDate) {
+      const workoutData = mockWorkoutsByDay[dayName];
+      if (workoutData) {
+        workoutForDate = {
+          date: selectedDate,
+          dayOfWeek: dayName,
+          dayLabel: dayName.charAt(0).toUpperCase() + dayName.slice(1),
+          muscleGroup: workoutData.muscleGroup,
+          exercises: workoutData.exercises.map((ex) => ({
+            ...ex,
+            completed: false,
+          })),
+          isWeekend: dayOfWeek === 0 || dayOfWeek === 6,
+        };
+      } else if (dayOfWeek === 0) {
+        workoutForDate = {
+          date: selectedDate,
+          dayOfWeek: dayName,
+          dayLabel: "Domingo",
+          muscleGroup: "Descanso",
+          exercises: [],
+          isWeekend: true,
+        };
       }
-
+    }
+    
       if (workoutForDate) {
-        initialWorkouts.set(dateISO, workoutForDate);
+        setWorkouts((prev) => {
+          const updated = new Map(prev);
+          updated.set(dateISO, workoutForDate!);
+          return updated;
+        });
       }
-    });
+    };
 
-    setWorkouts(initialWorkouts);
-    // Garantir que o dia atual está selecionado
-    setSelectedDate(currentDate);
-  }, []);
+    loadWorkoutForDate();
+  }, [selectedDate]);
 
   // Carregar atividades quando a data muda
   useEffect(() => {
-    // Verificar se estamos no navegador
-    if (typeof window === "undefined") return;
-    
-    const dateKey = selectedDate.toISOString().split("T")[0];
-    const saved = localStorage.getItem(`activities_${dateKey}`);
-    if (saved) {
+    const loadActivities = async () => {
+      const dateKey = selectedDate.toISOString().split("T")[0];
       try {
-        setActivities(JSON.parse(saved));
-      } catch (e) {
-        console.error("Erro ao carregar atividades:", e);
+        const firebaseActivities = await workoutService.getActivities(dateKey);
+        setActivities(firebaseActivities);
+      } catch (error) {
+        console.error("Erro ao carregar atividades:", error);
         setActivities([]);
       }
-    } else {
-      setActivities([]);
-    }
+    };
+
+    loadActivities();
   }, [selectedDate]);
 
   const currentWorkout = workouts.get(selectedDate.toISOString());
@@ -547,7 +836,9 @@ export default function TreinoPage() {
     };
   })();
 
-  const handleCompleteExercise = (exerciseId: string, weight?: number, minutes?: number, averageSpeed?: number) => {
+  const handleCompleteExercise = async (exerciseId: string, weight?: number, minutes?: number, averageSpeed?: number) => {
+    let workoutToSave: WorkoutDay | null = null;
+    
     setWorkouts((prev) => {
       const newWorkouts = new Map(prev);
       const workout = newWorkouts.get(selectedDate.toISOString());
@@ -558,16 +849,57 @@ export default function TreinoPage() {
             : ex
         );
         newWorkouts.set(selectedDate.toISOString(), workout);
-        
-        // Salvar treino no localStorage
-        const dateKey = selectedDate.toISOString().split("T")[0];
-        localStorage.setItem(`workout_${dateKey}`, JSON.stringify(workout));
-        
-        // Disparar evento para atualizar checklist
-        window.dispatchEvent(new CustomEvent("workoutUpdated", { detail: { dateKey } }));
+        workoutToSave = workout;
       }
       return newWorkouts;
     });
+
+    // Salvar treino no Firebase após atualizar o estado
+    if (workoutToSave) {
+      const dateKey = selectedDate.toISOString().split("T")[0];
+      try {
+        // Converter para o formato esperado pelo Firebase (sem Date object e sem undefined)
+        const exercisesFormatted = workoutToSave.exercises.map((ex) => {
+          const exercise: any = {
+            id: ex.id,
+            name: ex.name,
+            type: ex.type || "strength",
+            sets: typeof ex.sets === "number" ? ex.sets : (typeof ex.sets === "string" ? parseInt(ex.sets) || 0 : 0),
+            reps: ex.reps || "",
+            rest: ex.rest !== undefined ? ex.rest : (ex.type === "cardio" ? 30 : 60),
+            completed: ex.completed,
+          };
+          
+          // Adicionar campos opcionais apenas se existirem
+          if (ex.weight !== undefined) exercise.weight = ex.weight;
+          if (ex.minutes !== undefined) exercise.minutes = ex.minutes;
+          if (ex.averageSpeed !== undefined) exercise.averageSpeed = ex.averageSpeed;
+          if (ex.videoUrl) exercise.videoUrl = ex.videoUrl;
+          if (ex.intensity) exercise.intensity = ex.intensity;
+          if (ex.activityTemplateId) exercise.activityTemplateId = ex.activityTemplateId;
+          
+          return exercise;
+        });
+        
+        const workoutToSaveFormatted: any = {
+          dayOfWeek: workoutToSave.dayOfWeek,
+          dayLabel: workoutToSave.dayLabel,
+          muscleGroup: workoutToSave.muscleGroup,
+          exercises: exercisesFormatted,
+          isWeekend: workoutToSave.isWeekend,
+        };
+        
+        console.log("Salvando treino do dia:", dateKey, workoutToSaveFormatted);
+        await workoutService.saveWorkout(dateKey, workoutToSaveFormatted);
+        console.log("Treino salvo com sucesso!");
+        
+        // Disparar evento para atualizar checklist
+        window.dispatchEvent(new CustomEvent("workoutUpdated", { detail: { dateKey } }));
+      } catch (error) {
+        console.error("Erro ao salvar treino:", error);
+        alert(`Erro ao salvar treino: ${error instanceof Error ? error.message : "Erro desconhecido"}`);
+      }
+    }
 
     // Salvar atividade física para cálculo de gasto calórico usando METs
     const exercise = currentWorkout?.exercises.find((ex) => ex.id === exerciseId);
@@ -619,15 +951,12 @@ export default function TreinoPage() {
           met: met,
         };
 
-        // Carregar atividades existentes
-        const saved = localStorage.getItem(`activities_${dateKey}`);
+        // Carregar atividades existentes do Firebase
         let activities: PhysicalActivity[] = [];
-        if (saved) {
-          try {
-            activities = JSON.parse(saved);
-          } catch (e) {
-            console.error("Erro ao carregar atividades:", e);
-          }
+        try {
+          activities = await workoutService.getActivities(dateKey);
+        } catch (e) {
+          console.error("Erro ao carregar atividades:", e);
         }
 
         // Adicionar nova atividade (evitar duplicatas)
@@ -638,8 +967,12 @@ export default function TreinoPage() {
           activities.push(activity);
         }
 
-        // Salvar atividades
-        localStorage.setItem(`activities_${dateKey}`, JSON.stringify(activities));
+        // Salvar atividades no Firebase
+        try {
+          await workoutService.saveActivities(dateKey, activities);
+        } catch (error) {
+          console.error("Erro ao salvar atividades:", error);
+        }
 
         // Disparar evento para atualizar dashboard
         window.dispatchEvent(new CustomEvent("activitiesUpdated", { detail: { dateKey, activities } }));
@@ -689,20 +1022,7 @@ export default function TreinoPage() {
         }))}
         onDayClick={setSelectedDate}
         getDayStatus={(date) => {
-          // Verificar se estamos no navegador
-          if (typeof window === "undefined") return null;
-          
-          // Carregar do localStorage para garantir que está atualizado
-          const dateKey = date.toISOString().split("T")[0];
-          const saved = localStorage.getItem(`workout_${dateKey}`);
-          if (saved) {
-            try {
-              const workout = JSON.parse(saved);
-              return getDayStatus(workout);
-            } catch (e) {
-              console.error("Erro ao carregar treino:", e);
-            }
-          }
+          // Usar workout do estado (já carregado do Firebase pelos useEffects)
           const workout = workouts.get(date.toISOString());
           return getDayStatus(workout);
         }}
@@ -770,11 +1090,15 @@ export default function TreinoPage() {
                       <span className="text-zinc-400">{activity.duration}min</span>
                       <span className="text-emerald-300 font-medium">{activity.caloriesBurned} kcal</span>
                       <button
-                        onClick={() => {
+                        onClick={async () => {
                           const updated = activities.filter((a) => a.id !== activity.id);
                           setActivities(updated);
-                          localStorage.setItem(`activities_${dateKey}`, JSON.stringify(updated));
-                          window.dispatchEvent(new CustomEvent("activitiesUpdated", { detail: { dateKey, activities: updated } }));
+                          try {
+                            await workoutService.saveActivities(dateKey, updated);
+                            window.dispatchEvent(new CustomEvent("activitiesUpdated", { detail: { dateKey, activities: updated } }));
+                          } catch (error) {
+                            console.error("Erro ao remover atividade:", error);
+                          }
                         }}
                         className="text-zinc-500 hover:text-red-400 transition-colors"
                         title="Remover"
@@ -866,11 +1190,15 @@ export default function TreinoPage() {
                       <span className="text-zinc-400">{activity.duration}min</span>
                       <span className="text-emerald-300 font-medium">{activity.caloriesBurned} kcal</span>
                       <button
-                        onClick={() => {
+                        onClick={async () => {
                           const updated = activities.filter((a) => a.id !== activity.id);
                           setActivities(updated);
-                          localStorage.setItem(`activities_${dateKey}`, JSON.stringify(updated));
-                          window.dispatchEvent(new CustomEvent("activitiesUpdated", { detail: { dateKey, activities: updated } }));
+                          try {
+                            await workoutService.saveActivities(dateKey, updated);
+                            window.dispatchEvent(new CustomEvent("activitiesUpdated", { detail: { dateKey, activities: updated } }));
+                          } catch (error) {
+                            console.error("Erro ao remover atividade:", error);
+                          }
                         }}
                         className="text-zinc-500 hover:text-red-400 transition-colors"
                         title="Remover"
@@ -899,12 +1227,16 @@ export default function TreinoPage() {
         <ActivityModal
           dateKey={dateKey}
           onClose={() => setShowActivityModal(false)}
-          onAddActivity={(activity) => {
+          onAddActivity={async (activity) => {
             const updated = [...activities, activity];
             setActivities(updated);
-            localStorage.setItem(`activities_${dateKey}`, JSON.stringify(updated));
-            window.dispatchEvent(new CustomEvent("activitiesUpdated", { detail: { dateKey, activities: updated } }));
-            setShowActivityModal(false);
+            try {
+              await workoutService.saveActivities(dateKey, updated);
+              window.dispatchEvent(new CustomEvent("activitiesUpdated", { detail: { dateKey, activities: updated } }));
+              setShowActivityModal(false);
+            } catch (error) {
+              console.error("Erro ao adicionar atividade:", error);
+            }
           }}
         />
       )}

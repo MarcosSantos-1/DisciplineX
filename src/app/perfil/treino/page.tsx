@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { ACTIVITY_TEMPLATES, ActivityTemplate } from "@/types/meals";
+import { workoutService } from "@/lib/firebaseService";
 
 type ExerciseType = "strength" | "cardio" | "custom";
 
@@ -37,31 +38,281 @@ type WorkoutDay = {
 export default function TreinoConfigPage() {
   const [workouts, setWorkouts] = useState<Map<string, WorkoutDay>>(new Map());
   const [selectedDay, setSelectedDay] = useState<string>("segunda");
+  const [showSuccessMessage, setShowSuccessMessage] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
-  const dayNames = ["segunda", "terca", "quarta", "quinta", "sexta", "sabado"];
+  const dayNames = ["domingo", "segunda", "terca", "quarta", "quinta", "sexta", "sabado"];
+
+  // Função auxiliar para remover campos undefined de um objeto
+  const removeUndefinedFields = (obj: any): any => {
+    if (obj === null || obj === undefined) {
+      return null;
+    }
+    if (Array.isArray(obj)) {
+      return obj.map(removeUndefinedFields);
+    }
+    if (typeof obj === "object") {
+      const cleaned: any = {};
+      for (const key in obj) {
+        if (obj[key] !== undefined) {
+          cleaned[key] = removeUndefinedFields(obj[key]);
+        }
+      }
+      return cleaned;
+    }
+    return obj;
+  };
 
   useEffect(() => {
-    // Verificar se estamos no navegador
-    if (typeof window === "undefined") return;
-    
-    // Carregar treinos salvos
-    const saved = localStorage.getItem("workout_config");
-    if (saved) {
+    const loadData = async () => {
       try {
-        const parsed = JSON.parse(saved);
-        const workoutsMap = new Map<string, WorkoutDay>();
-        Object.entries(parsed).forEach(([day, workout]: [string, any]) => {
-          workoutsMap.set(day, {
-            ...workout,
+        // Carregar configuração de treino do Firebase
+        const firebaseConfig = await workoutService.getWorkoutConfig();
+        
+        // Função auxiliar para converter sets de string para número e extrair reps
+        const parseExerciseFromMock = (ex: any): Exercise => {
+          let sets = 0;
+          let reps = "";
+          
+          if (typeof ex.sets === "string") {
+            if (ex.sets.includes("x")) {
+              const parts = ex.sets.split("x");
+              sets = parseInt(parts[0]) || 0;
+              reps = parts[1] || "";
+            } else if (ex.sets === "") {
+              sets = 1;
+              reps = "";
+            } else {
+              sets = parseInt(ex.sets) || 0;
+            }
+          } else {
+            sets = ex.sets || 0;
+          }
+          
+          const isCardio = ex.name.includes("🚶") || ex.name.includes("🏃") || ex.name.toLowerCase().includes("cardio");
+          
+          return {
+            id: ex.id,
+            name: ex.name,
+            type: ex.type || (isCardio ? "cardio" : "strength"),
+            sets,
+            reps: ex.reps || reps,
+            rest: ex.rest !== undefined ? ex.rest : (isCardio ? 30 : 60),
+            completed: false,
+            minutes: ex.minutes,
+            intensity: ex.intensity,
+          };
+        };
+
+        // Treinos mockados padrão (mesmos da página de treino)
+        const mockWorkoutsByDay: Record<string, { muscleGroup: string; exercises: any[] }> = {
+          segunda: {
+            muscleGroup: "Peito + Tríceps + Cardio leve",
+            exercises: [
+              { id: "1", name: "Supino reto", sets: "4x10" },
+              { id: "2", name: "Supino inclinado", sets: "3x12" },
+              { id: "3", name: "Crucifixo", sets: "3x15" },
+              { id: "4", name: "Tríceps corda", sets: "3x12" },
+              { id: "5", name: "Tríceps banco (ou coice)", sets: "3x12" },
+              { id: "6", name: "Abdominal infra + prancha", sets: "3x20 / 3x30s" },
+              { id: "7", name: "🚶‍♂️ Cardio leve na esteira (caminhada rápida)", sets: "", minutes: 20 },
+            ],
+          },
+          terca: {
+            muscleGroup: "Costas + Bíceps + Cardio leve",
+            exercises: [
+              { id: "8", name: "Puxada frente pronada", sets: "4x10" },
+              { id: "9", name: "Remada baixa ou cavalinho", sets: "3x12" },
+              { id: "10", name: "Puxada neutra", sets: "3x12" },
+              { id: "11", name: "Rosca direta", sets: "3x12" },
+              { id: "12", name: "Rosca alternada (neutra)", sets: "3x12" },
+              { id: "13", name: "Abdominal oblíquo", sets: "3x20" },
+              { id: "14", name: "🚶‍♂️ Cardio leve (esteira ou escada inclinada)", sets: "", minutes: 20 },
+            ],
+          },
+          quarta: {
+            muscleGroup: "Ombro + Trapézio + Abdômen + Cardio moderado",
+            exercises: [
+              { id: "15", name: "Desenvolvimento com halteres", sets: "4x10" },
+              { id: "16", name: "Elevação lateral", sets: "3x15" },
+              { id: "17", name: "Elevação frontal", sets: "3x12" },
+              { id: "18", name: "Encolhimento (trapézio)", sets: "3x15" },
+              { id: "19", name: "Abdominais (infra + prancha + oblíquos)", sets: "3x cada" },
+              { id: "20", name: "🚶‍♂️ Cardio moderado (esteira inclinada ou bike)", sets: "", minutes: 30 },
+            ],
+          },
+          quinta: {
+            muscleGroup: "PERNAS (dia pesado 1)",
+            exercises: [
+              { id: "21", name: "Agachamento livre", sets: "4x10" },
+              { id: "22", name: "Afundo ou búlgaro", sets: "3x10" },
+              { id: "23", name: "Leg Press", sets: "4x12" },
+              { id: "24", name: "Cadeira extensora", sets: "3x15" },
+              { id: "25", name: "Cadeira flexora", sets: "3x15" },
+              { id: "26", name: "Panturrilha sentado", sets: "4x20" },
+              { id: "27", name: "🚶‍♂️ Cardio leve pós-treino só pra soltar as pernas", sets: "", minutes: 15 },
+            ],
+          },
+          sexta: {
+            muscleGroup: "Full Body + Cardio intenso",
+            exercises: [
+              { id: "28", name: "Supino reto", sets: "3x12" },
+              { id: "29", name: "Remada curvada", sets: "3x12" },
+              { id: "30", name: "Agachamento leve", sets: "3x12" },
+              { id: "31", name: "Rosca direta + Tríceps corda (superset)", sets: "3x12" },
+              { id: "32", name: "Abdominais + prancha", sets: "3 séries" },
+              { id: "33", name: "🏃 Cardio intenso (esteira inclinada, caminhada forte, ou HIIT leve)", sets: "", minutes: 30 },
+            ],
+          },
+          sabado: {
+            muscleGroup: "Cardio + Core (Opcional)",
+            exercises: [
+              { id: "34", name: "🚶 Caminhada ou esteira leve/moderada (130-145 bpm)", sets: "", minutes: 45 },
+              { id: "35", name: "Abdominais variados (infra, supra, prancha, lateral)", sets: "4x20" },
+              { id: "36", name: "Alongamentos gerais + liberação miofascial", sets: "" },
+            ],
+          },
+          domingo: {
+            muscleGroup: "Descanso",
+            exercises: [],
+          },
+        };
+
+        // Sempre carregar mockados primeiro, depois mesclar com Firebase
+        const workoutsMapFromMock = new Map<string, WorkoutDay>();
+        Object.entries(mockWorkoutsByDay).forEach(([day, mockData]) => {
+          workoutsMapFromMock.set(day, {
             date: new Date(),
-            exercises: workout.exercises || [],
+            dayOfWeek: day,
+            dayLabel: day.charAt(0).toUpperCase() + day.slice(1),
+            muscleGroup: mockData.muscleGroup,
+            exercises: mockData.exercises.map(parseExerciseFromMock),
+            isWeekend: day === "sabado" || day === "domingo",
           });
         });
-        setWorkouts(workoutsMap);
-      } catch (e) {
-        console.error("Erro ao carregar treinos:", e);
+
+        if (firebaseConfig && Object.keys(firebaseConfig).length > 0) {
+          // Se tem configuração no Firebase, mesclar com mockados (Firebase tem prioridade)
+          Object.entries(firebaseConfig).forEach(([day, workout]: [string, any]) => {
+            if (workout && workout.exercises && Array.isArray(workout.exercises) && workout.exercises.length > 0) {
+              workoutsMapFromMock.set(day, {
+                ...workout,
+                date: new Date(),
+                exercises: workout.exercises.map((ex: any) => ({
+                  ...ex,
+                  rest: ex.rest !== undefined ? ex.rest : (ex.type === "cardio" ? 30 : 60),
+                  videoUrl: ex.videoUrl || undefined,
+                  type: ex.type || "strength",
+                  reps: ex.reps || "",
+                  intensity: ex.intensity || undefined,
+                  activityTemplateId: ex.activityTemplateId || undefined,
+                  sets: typeof ex.sets === "number" ? ex.sets : (typeof ex.sets === "string" ? parseInt(ex.sets) || 0 : 0),
+                })),
+              });
+            }
+          });
+        }
+        
+        setWorkouts(workoutsMapFromMock);
+        
+        // Se não tinha nada no Firebase ou estava vazio, salvar os mockados
+        if (!firebaseConfig || Object.keys(firebaseConfig).length === 0) {
+          const configToSave: Record<string, any> = {};
+          workoutsMapFromMock.forEach((workout, day) => {
+            const exerciseData = workout.exercises.map((ex) => {
+              const exercise: any = {
+                id: ex.id,
+                name: ex.name,
+                type: ex.type || "strength",
+                sets: typeof ex.sets === "number" ? ex.sets : 0,
+                reps: ex.reps || "",
+                rest: ex.rest !== undefined ? ex.rest : (ex.type === "cardio" ? 30 : 60),
+                completed: false,
+              };
+              
+              // Adicionar campos opcionais apenas se existirem
+              if (ex.weight !== undefined) exercise.weight = ex.weight;
+              if (ex.minutes !== undefined) exercise.minutes = ex.minutes;
+              if (ex.averageSpeed !== undefined) exercise.averageSpeed = ex.averageSpeed;
+              if (ex.videoUrl) exercise.videoUrl = ex.videoUrl;
+              if (ex.intensity) exercise.intensity = ex.intensity;
+              if (ex.activityTemplateId) exercise.activityTemplateId = ex.activityTemplateId;
+              
+              return exercise;
+            });
+            
+            configToSave[day] = {
+              dayOfWeek: workout.dayOfWeek,
+              dayLabel: workout.dayLabel,
+              muscleGroup: workout.muscleGroup,
+              exercises: exerciseData,
+              isWeekend: workout.isWeekend,
+            };
+          });
+          
+          // Remover campos undefined antes de salvar
+          const cleanedConfig = removeUndefinedFields(configToSave);
+          await workoutService.saveWorkoutConfig(cleanedConfig);
+        } else {
+          // Mesmo que tenha Firebase, garantir que todos os dias estão presentes
+          let needsUpdate = false;
+          dayNames.forEach((day) => {
+            if (!firebaseConfig[day]) {
+              needsUpdate = true;
+            } else if (!firebaseConfig[day].exercises || firebaseConfig[day].exercises.length === 0) {
+              // Se o dia existe mas não tem exercícios, usar mock se disponível
+              if (mockWorkoutsByDay[day] && mockWorkoutsByDay[day].exercises.length > 0) {
+                needsUpdate = true;
+              }
+            }
+          });
+          
+          if (needsUpdate) {
+            const configToSave: Record<string, any> = {};
+            workoutsMapFromMock.forEach((workout, day) => {
+              const exerciseData = workout.exercises.map((ex) => {
+                const exercise: any = {
+                  id: ex.id,
+                  name: ex.name,
+                  type: ex.type || "strength",
+                  sets: typeof ex.sets === "number" ? ex.sets : 0,
+                  reps: ex.reps || "",
+                  rest: ex.rest !== undefined ? ex.rest : (ex.type === "cardio" ? 30 : 60),
+                  completed: false,
+                };
+                
+                // Adicionar campos opcionais apenas se existirem
+                if (ex.weight !== undefined) exercise.weight = ex.weight;
+                if (ex.minutes !== undefined) exercise.minutes = ex.minutes;
+                if (ex.averageSpeed !== undefined) exercise.averageSpeed = ex.averageSpeed;
+                if (ex.videoUrl) exercise.videoUrl = ex.videoUrl;
+                if (ex.intensity) exercise.intensity = ex.intensity;
+                if (ex.activityTemplateId) exercise.activityTemplateId = ex.activityTemplateId;
+                
+                return exercise;
+              });
+              
+              configToSave[day] = {
+                dayOfWeek: workout.dayOfWeek,
+                dayLabel: workout.dayLabel,
+                muscleGroup: workout.muscleGroup,
+                exercises: exerciseData,
+                isWeekend: workout.isWeekend,
+              };
+            });
+            
+            // Remover campos undefined antes de salvar
+            const cleanedConfig = removeUndefinedFields(configToSave);
+            await workoutService.saveWorkoutConfig(cleanedConfig);
+          }
+        }
+      } catch (error) {
+        console.error("Erro ao carregar treinos:", error);
       }
-    }
+    };
+
+    loadData();
   }, []);
 
   const currentWorkout = workouts.get(selectedDay);
@@ -69,7 +320,7 @@ export default function TreinoConfigPage() {
   const [showAddExerciseModal, setShowAddExerciseModal] = useState(false);
   const [newExerciseType, setNewExerciseType] = useState<ExerciseType>("strength");
 
-  const handleAddExercise = (type: ExerciseType = "strength", templateId?: string) => {
+  const handleAddExercise = async (type: ExerciseType = "strength", templateId?: string) => {
     let newExercise: Exercise;
 
     if (templateId) {
@@ -126,11 +377,11 @@ export default function TreinoConfigPage() {
     workout.exercises = [...workout.exercises, newExercise];
     updated.set(selectedDay, workout);
     setWorkouts(updated);
-    saveWorkouts(updated);
+    await saveWorkouts(updated, true);
     setShowAddExerciseModal(false);
   };
 
-  const handleUpdateExercise = (exerciseId: string, updates: Partial<Exercise>) => {
+  const handleUpdateExercise = async (exerciseId: string, updates: Partial<Exercise>) => {
     const updated = new Map(workouts);
     const workout = updated.get(selectedDay);
     if (workout) {
@@ -139,22 +390,22 @@ export default function TreinoConfigPage() {
       );
       updated.set(selectedDay, workout);
       setWorkouts(updated);
-      saveWorkouts(updated);
+      await saveWorkouts(updated);
     }
   };
 
-  const handleDeleteExercise = (exerciseId: string) => {
+  const handleDeleteExercise = async (exerciseId: string) => {
     const updated = new Map(workouts);
     const workout = updated.get(selectedDay);
     if (workout) {
       workout.exercises = workout.exercises.filter((ex) => ex.id !== exerciseId);
       updated.set(selectedDay, workout);
       setWorkouts(updated);
-      saveWorkouts(updated);
+      await saveWorkouts(updated);
     }
   };
 
-  const handleUpdateMuscleGroup = (muscleGroup: string) => {
+  const handleUpdateMuscleGroup = async (muscleGroup: string) => {
     const updated = new Map(workouts);
     const workout = updated.get(selectedDay) || {
       date: new Date(),
@@ -167,24 +418,77 @@ export default function TreinoConfigPage() {
     workout.muscleGroup = muscleGroup;
     updated.set(selectedDay, workout);
     setWorkouts(updated);
-    saveWorkouts(updated);
+    await saveWorkouts(updated);
   };
 
-  const saveWorkouts = (workoutsToSave: Map<string, WorkoutDay>) => {
-    // Verificar se estamos no navegador
-    if (typeof window === "undefined") return;
+  const saveWorkouts = async (workoutsToSave: Map<string, WorkoutDay>, showFeedback = false) => {
+    setIsSaving(true);
+    setSaveError(null);
     
-    const config: Record<string, any> = {};
-    workoutsToSave.forEach((workout, day) => {
-      config[day] = {
-        dayOfWeek: workout.dayOfWeek,
-        dayLabel: workout.dayLabel,
-        muscleGroup: workout.muscleGroup,
-        exercises: workout.exercises,
-        isWeekend: workout.isWeekend,
-      };
-    });
-    localStorage.setItem("workout_config", JSON.stringify(config));
+    try {
+      const config: Record<string, any> = {};
+      workoutsToSave.forEach((workout, day) => {
+        if (workout && workout.exercises) {
+          const exerciseData = workout.exercises.map((ex) => {
+            const exercise: any = {
+              id: ex.id,
+              name: ex.name,
+              type: ex.type || "strength",
+              sets: typeof ex.sets === "number" ? ex.sets : (typeof ex.sets === "string" ? parseInt(ex.sets) || 0 : 0),
+              reps: ex.reps || "",
+              rest: ex.rest !== undefined ? ex.rest : (ex.type === "cardio" ? 30 : 60),
+              completed: false, // Sempre false na configuração
+            };
+            
+            // Adicionar campos opcionais apenas se existirem
+            if (ex.weight !== undefined) exercise.weight = ex.weight;
+            if (ex.minutes !== undefined) exercise.minutes = ex.minutes;
+            if (ex.averageSpeed !== undefined) exercise.averageSpeed = ex.averageSpeed;
+            if (ex.videoUrl) exercise.videoUrl = ex.videoUrl;
+            if (ex.intensity) exercise.intensity = ex.intensity;
+            if (ex.activityTemplateId) exercise.activityTemplateId = ex.activityTemplateId;
+            
+            return exercise;
+          });
+          
+          config[day] = {
+            dayOfWeek: workout.dayOfWeek,
+            dayLabel: workout.dayLabel,
+            muscleGroup: workout.muscleGroup,
+            exercises: exerciseData,
+            isWeekend: workout.isWeekend,
+          };
+        }
+      });
+      
+      // Remover campos undefined antes de salvar
+      const cleanedConfig = removeUndefinedFields(config);
+      
+      console.log("Salvando configuração de treino:", cleanedConfig);
+      await workoutService.saveWorkoutConfig(cleanedConfig);
+      console.log("Configuração salva com sucesso!");
+      
+      // Disparar evento para atualizar página de treino
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("workoutConfigUpdated"));
+      }
+      
+      if (showFeedback) {
+        setShowSuccessMessage(true);
+        setTimeout(() => {
+          setShowSuccessMessage(false);
+        }, 3000);
+      }
+    } catch (e) {
+      console.error("Erro ao salvar treinos:", e);
+      const errorMessage = e instanceof Error ? e.message : "Erro ao salvar treinos";
+      setSaveError(errorMessage);
+      setTimeout(() => {
+        setSaveError(null);
+      }, 5000);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -201,7 +505,35 @@ export default function TreinoConfigPage() {
             Configure os exercícios para cada dia da semana.
           </p>
         </div>
+        <button
+          onClick={() => saveWorkouts(workouts, true)}
+          disabled={isSaving}
+          className={`rounded-xl border px-6 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${
+            isSaving
+              ? "border-zinc-700 bg-zinc-800/60 text-zinc-500 cursor-not-allowed"
+              : "border-jagger-400 bg-jagger-500/20 text-jagger-300 hover:bg-jagger-500/30 hover:border-jagger-300"
+          }`}
+        >
+          {isSaving ? "Salvando..." : "💾 Salvar Exercícios"}
+        </button>
       </header>
+
+      {/* Mensagens de feedback */}
+      {showSuccessMessage && (
+        <div className="glass-panel rounded-xl border border-green-500/50 bg-green-500/10 p-4">
+          <p className="text-sm font-medium text-green-400">
+            ✓ Exercícios salvos com sucesso!
+          </p>
+        </div>
+      )}
+      
+      {saveError && (
+        <div className="glass-panel rounded-xl border border-red-500/50 bg-red-500/10 p-4">
+          <p className="text-sm font-medium text-red-400">
+            ✗ Erro ao salvar: {saveError}
+          </p>
+        </div>
+      )}
 
       {/* Seleção de dia */}
       <section className="glass-panel rounded-3xl p-4">

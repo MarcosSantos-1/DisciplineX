@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { fastingService } from "@/lib/firebaseService";
 
 type FastingType = {
   id: string;
@@ -40,46 +41,32 @@ export function FastingTracker({ date }: FastingTrackerProps) {
 
   // Carregar tipos de jejum e cronograma
   useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const savedTypes = localStorage.getItem("fasting_types");
-    if (savedTypes) {
+    const loadData = async () => {
       try {
-        setFastingTypes(JSON.parse(savedTypes));
-      } catch (e) {
-        console.error("Erro ao carregar tipos de jejum:", e);
-      }
-    }
-
-    const savedSchedule = localStorage.getItem("fasting_schedule");
-    if (savedSchedule) {
-      try {
-        setSchedule(JSON.parse(savedSchedule));
-      } catch (e) {
-        // Criar cronograma padrão
-        const defaultSchedule: FastingSchedule[] = [];
-        for (let i = 0; i < 7; i++) {
-          defaultSchedule.push({
-            dayOfWeek: i,
-            fastingTypeId: null,
-            startTime: "20:00",
-          });
+        // Carregar tipos de jejum do Firebase
+        const firebaseTypes = await fastingService.getFastingTypes();
+        if (firebaseTypes.length > 0) {
+          setFastingTypes(firebaseTypes);
         }
-        setSchedule(defaultSchedule);
-      }
-    }
 
-    // Carregar sessão ativa
-    const savedSession = localStorage.getItem(`fasting_session_${dateKey}`);
-    if (savedSession) {
-      try {
-        const parsed = JSON.parse(savedSession);
-        setSession(parsed);
-        setIsActive(!parsed.paused);
-      } catch (e) {
-        console.error("Erro ao carregar sessão:", e);
+        // Carregar cronograma do Firebase
+        const firebaseSchedule = await fastingService.getFastingSchedule();
+        if (firebaseSchedule.length === 7) {
+          setSchedule(firebaseSchedule);
+        }
+
+        // Carregar sessão ativa do Firebase
+        const firebaseSession = await fastingService.getFastingSession(dateKey);
+        if (firebaseSession) {
+          setSession(firebaseSession);
+          setIsActive(!firebaseSession.paused);
+        }
+      } catch (error) {
+        console.error("Erro ao carregar dados:", error);
       }
-    }
+    };
+
+    loadData();
   }, [dateKey]);
 
   // Obter tipo de jejum configurado para o dia
@@ -126,7 +113,7 @@ export function FastingTracker({ date }: FastingTrackerProps) {
     }
   }, [elapsedTime, session, isActive, fastingType]);
 
-  const handleStart = () => {
+  const handleStart = async () => {
     if (!fastingType) return;
 
     const now = Date.now();
@@ -140,10 +127,14 @@ export function FastingTracker({ date }: FastingTrackerProps) {
 
     setSession(newSession);
     setIsActive(true);
-    localStorage.setItem(`fasting_session_${dateKey}`, JSON.stringify(newSession));
+    try {
+      await fastingService.saveFastingSession(dateKey, newSession);
+    } catch (error) {
+      console.error("Erro ao salvar sessão:", error);
+    }
   };
 
-  const handlePause = () => {
+  const handlePause = async () => {
     if (!session) return;
 
     const now = Date.now();
@@ -155,10 +146,14 @@ export function FastingTracker({ date }: FastingTrackerProps) {
 
     setSession(updated);
     setIsActive(false);
-    localStorage.setItem(`fasting_session_${dateKey}`, JSON.stringify(updated));
+    try {
+      await fastingService.saveFastingSession(dateKey, updated);
+    } catch (error) {
+      console.error("Erro ao pausar sessão:", error);
+    }
   };
 
-  const handleResume = () => {
+  const handleResume = async () => {
     if (!session || !session.pausedAt) return;
 
     const now = Date.now();
@@ -172,25 +167,27 @@ export function FastingTracker({ date }: FastingTrackerProps) {
 
     setSession(updated);
     setIsActive(true);
-    localStorage.setItem(`fasting_session_${dateKey}`, JSON.stringify(updated));
+    try {
+      await fastingService.saveFastingSession(dateKey, updated);
+    } catch (error) {
+      console.error("Erro ao retomar sessão:", error);
+    }
   };
 
-  const handleComplete = () => {
+  const handleComplete = async () => {
     if (!session) return;
 
-    // Salvar histórico
-    const history = JSON.parse(localStorage.getItem(`fasting_history_${dateKey}`) || "[]");
-    history.push({
-      ...session,
-      completedAt: Date.now(),
-      completed: true,
-    });
-    localStorage.setItem(`fasting_history_${dateKey}`, JSON.stringify(history));
+    try {
+      // Salvar histórico no Firebase
+      await fastingService.addFastingHistory(dateKey, session);
 
-    // Limpar sessão
-    setSession(null);
-    setIsActive(false);
-    localStorage.removeItem(`fasting_session_${dateKey}`);
+      // Limpar sessão
+      await fastingService.deleteFastingSession(dateKey);
+      setSession(null);
+      setIsActive(false);
+    } catch (error) {
+      console.error("Erro ao completar sessão:", error);
+    }
   };
 
   const formatTime = (ms: number): string => {

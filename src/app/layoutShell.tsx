@@ -15,6 +15,7 @@ import {
   CalendarDaysIcon as CalendarDaysIconSolid,
   UserCircleIcon as UserCircleIconSolid,
 } from "@heroicons/react/24/solid";
+import { useFirebaseSync } from "@/hooks/useFirebaseSync";
 
 type LayoutShellProps = {
   children: ReactNode;
@@ -33,6 +34,8 @@ function classNames(...values: (string | false | null | undefined)[]) {
 
 export function LayoutShell({ children }: LayoutShellProps) {
   const pathname = usePathname();
+  // Sincronizar dados do localStorage para Firebase na primeira vez
+  useFirebaseSync();
 
   return (
     <div className="flex min-h-screen text-sm text-zinc-100">
