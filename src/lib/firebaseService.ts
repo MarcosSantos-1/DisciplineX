@@ -74,6 +74,63 @@ export type AnthropometryData = {
   lastMeasurementDate: Date;
 };
 
+export type ChecklistItem = {
+  id: string;
+  label: string;
+  isSpecial: boolean;
+  weight: number;
+  date?: string;
+};
+
+export type SelectedMeal = {
+  slotId: string;
+  optionId: string;
+  date: string;
+};
+
+export type CustomMealOption = {
+  slotId: string;
+  name: string;
+  items: any[];
+  totalCalories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+};
+
+export type Recipe = {
+  id: string;
+  name: string;
+  description?: string;
+  image?: string;
+  ingredients: any[];
+  instructions: string[];
+  prepTime: number;
+  totalCalories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  createdAt: string;
+  tags?: string[];
+  type: "recipe";
+};
+
+export type QuickFood = {
+  id: string;
+  name: string;
+  description?: string;
+  image?: string;
+  totalCalories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  createdAt: string;
+  tags?: string[];
+  type: "quickfood";
+  brand?: string;
+  servingSize?: string;
+};
+
 // Helper para converter Date para Timestamp
 const dateToTimestamp = (date: Date) => Timestamp.fromDate(date);
 const timestampToDate = (timestamp: Timestamp) => timestamp.toDate();
@@ -278,6 +335,244 @@ export const workoutService = {
   },
 };
 
+// ==================== CHECKLIST ====================
+
+export const checklistService = {
+  // Checklist diário
+  async getDailyChecklist(dateKey: string): Promise<ChecklistItem[] | null> {
+    try {
+      const docRef = doc(db, "dailyChecklists", dateKey);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        return docSnap.data().items || null;
+      }
+      return null;
+    } catch (error) {
+      console.error("Erro ao carregar checklist diário:", error);
+      return null;
+    }
+  },
+
+  async saveDailyChecklist(dateKey: string, items: ChecklistItem[]): Promise<void> {
+    try {
+      const docRef = doc(db, "dailyChecklists", dateKey);
+      await setDoc(docRef, { items, date: dateKey });
+    } catch (error) {
+      console.error("Erro ao salvar checklist diário:", error);
+      throw error;
+    }
+  },
+
+  // Checklist padrão
+  async getDefaultChecklist(): Promise<ChecklistItem[]> {
+    try {
+      const docRef = doc(db, "userData", "defaultChecklist");
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        return docSnap.data().items || [];
+      }
+      return [];
+    } catch (error) {
+      console.error("Erro ao carregar checklist padrão:", error);
+      return [];
+    }
+  },
+
+  async saveDefaultChecklist(items: ChecklistItem[]): Promise<void> {
+    try {
+      const docRef = doc(db, "userData", "defaultChecklist");
+      await setDoc(docRef, { items });
+    } catch (error) {
+      console.error("Erro ao salvar checklist padrão:", error);
+      throw error;
+    }
+  },
+
+  // Missões especiais
+  async getSpecialChecks(dateKey: string): Promise<ChecklistItem[]> {
+    try {
+      const docRef = doc(db, "specialChecks", dateKey);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        return docSnap.data().items || [];
+      }
+      return [];
+    } catch (error) {
+      console.error("Erro ao carregar missões especiais:", error);
+      return [];
+    }
+  },
+
+  async saveSpecialChecks(dateKey: string, items: ChecklistItem[]): Promise<void> {
+    try {
+      const docRef = doc(db, "specialChecks", dateKey);
+      await setDoc(docRef, { items, date: dateKey });
+    } catch (error) {
+      console.error("Erro ao salvar missões especiais:", error);
+      throw error;
+    }
+  },
+
+  // Estado do checklist (checkedIds)
+  async getChecklistState(dateKey: string): Promise<Set<string> | null> {
+    try {
+      const docRef = doc(db, "checklistStates", dateKey);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        const checkedIds = docSnap.data().checkedIds || [];
+        return new Set(checkedIds);
+      }
+      return null;
+    } catch (error) {
+      console.error("Erro ao carregar estado do checklist:", error);
+      return null;
+    }
+  },
+
+  async saveChecklistState(dateKey: string, checkedIds: Set<string>): Promise<void> {
+    try {
+      const docRef = doc(db, "checklistStates", dateKey);
+      await setDoc(docRef, { checkedIds: Array.from(checkedIds), date: dateKey });
+    } catch (error) {
+      console.error("Erro ao salvar estado do checklist:", error);
+      throw error;
+    }
+  },
+};
+
+// ==================== REFEIÇÕES ====================
+
+export const mealService = {
+  // Refeições do dia
+  async getMeals(dateKey: string): Promise<SelectedMeal[]> {
+    try {
+      const docRef = doc(db, "meals", dateKey);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        return docSnap.data().meals || [];
+      }
+      return [];
+    } catch (error) {
+      console.error("Erro ao carregar refeições:", error);
+      return [];
+    }
+  },
+
+  async saveMeals(dateKey: string, meals: SelectedMeal[]): Promise<void> {
+    try {
+      const docRef = doc(db, "meals", dateKey);
+      await setDoc(docRef, { meals, date: dateKey });
+    } catch (error) {
+      console.error("Erro ao salvar refeições:", error);
+      throw error;
+    }
+  },
+
+  // Refeições selecionadas gerais
+  async getSelectedMeals(): Promise<SelectedMeal[]> {
+    try {
+      const docRef = doc(db, "userData", "selectedMeals");
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        return docSnap.data().meals || [];
+      }
+      return [];
+    } catch (error) {
+      console.error("Erro ao carregar refeições selecionadas:", error);
+      return [];
+    }
+  },
+
+  async saveSelectedMeals(meals: SelectedMeal[]): Promise<void> {
+    try {
+      const docRef = doc(db, "userData", "selectedMeals");
+      await setDoc(docRef, { meals });
+    } catch (error) {
+      console.error("Erro ao salvar refeições selecionadas:", error);
+      throw error;
+    }
+  },
+
+  // Opções customizadas
+  async getCustomOptions(slotId: string): Promise<CustomMealOption[]> {
+    try {
+      const docRef = doc(db, "customMealOptions", slotId);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        return docSnap.data().options || [];
+      }
+      return [];
+    } catch (error) {
+      console.error("Erro ao carregar opções customizadas:", error);
+      return [];
+    }
+  },
+
+  async saveCustomOptions(slotId: string, options: CustomMealOption[]): Promise<void> {
+    try {
+      const docRef = doc(db, "customMealOptions", slotId);
+      await setDoc(docRef, { options, slotId });
+    } catch (error) {
+      console.error("Erro ao salvar opções customizadas:", error);
+      throw error;
+    }
+  },
+};
+
+// ==================== BIBLIOTECA (ARSENAL) ====================
+
+export const libraryService = {
+  // Receitas
+  async getRecipes(): Promise<Recipe[]> {
+    try {
+      const docRef = doc(db, "userData", "recipeLibrary");
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        return docSnap.data().recipes || [];
+      }
+      return [];
+    } catch (error) {
+      console.error("Erro ao carregar receitas:", error);
+      return [];
+    }
+  },
+
+  async saveRecipes(recipes: Recipe[]): Promise<void> {
+    try {
+      const docRef = doc(db, "userData", "recipeLibrary");
+      await setDoc(docRef, { recipes });
+    } catch (error) {
+      console.error("Erro ao salvar receitas:", error);
+      throw error;
+    }
+  },
+
+  // Comidas prontas
+  async getQuickFoods(): Promise<QuickFood[]> {
+    try {
+      const docRef = doc(db, "userData", "quickFoodLibrary");
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        return docSnap.data().quickFoods || [];
+      }
+      return [];
+    } catch (error) {
+      console.error("Erro ao carregar comidas prontas:", error);
+      return [];
+    }
+  },
+
+  async saveQuickFoods(quickFoods: QuickFood[]): Promise<void> {
+    try {
+      const docRef = doc(db, "userData", "quickFoodLibrary");
+      await setDoc(docRef, { quickFoods });
+    } catch (error) {
+      console.error("Erro ao salvar comidas prontas:", error);
+      throw error;
+    }
+  },
+};
+
 // ==================== PERFIL ====================
 
 export const profileService = {
@@ -410,62 +705,6 @@ export const profileService = {
       await setDoc(docRef, { history });
     } catch (error) {
       console.error("Erro ao salvar histórico de antropometria:", error);
-      throw error;
-    }
-  },
-};
-
-// ==================== CHECKLIST ====================
-
-export const checklistService = {
-  async getDailyChecklist(dateKey: string): Promise<any | null> {
-    try {
-      const docRef = doc(db, "dailyChecklists", dateKey);
-      const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) {
-        return docSnap.data();
-      }
-      return null;
-    } catch (error) {
-      console.error("Erro ao carregar checklist:", error);
-      return null;
-    }
-  },
-
-  async saveDailyChecklist(dateKey: string, checklist: any): Promise<void> {
-    try {
-      const docRef = doc(db, "dailyChecklists", dateKey);
-      await setDoc(docRef, checklist);
-    } catch (error) {
-      console.error("Erro ao salvar checklist:", error);
-      throw error;
-    }
-  },
-};
-
-// ==================== REFEIÇÕES ====================
-
-export const mealService = {
-  async getSelectedMeals(): Promise<any[]> {
-    try {
-      const docRef = doc(db, "userData", "selectedMeals");
-      const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) {
-        return docSnap.data().meals || [];
-      }
-      return [];
-    } catch (error) {
-      console.error("Erro ao carregar refeições selecionadas:", error);
-      return [];
-    }
-  },
-
-  async saveSelectedMeals(meals: any[]): Promise<void> {
-    try {
-      const docRef = doc(db, "userData", "selectedMeals");
-      await setDoc(docRef, { meals });
-    } catch (error) {
-      console.error("Erro ao salvar refeições selecionadas:", error);
       throw error;
     }
   },
