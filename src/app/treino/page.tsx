@@ -849,17 +849,18 @@ export default function TreinoPage() {
             : ex
         );
         newWorkouts.set(selectedDate.toISOString(), workout);
-        workoutToSave = workout;
+        workoutToSave = { ...workout };
       }
       return newWorkouts;
     });
 
     // Salvar treino no Firebase após atualizar o estado
     if (workoutToSave) {
+      const workout: WorkoutDay = workoutToSave;
       const dateKey = selectedDate.toISOString().split("T")[0];
       try {
         // Converter para o formato esperado pelo Firebase (sem Date object e sem undefined)
-        const exercisesFormatted = workoutToSave.exercises.map((ex) => {
+        const exercisesFormatted = workout.exercises.map((ex) => {
           const exercise: any = {
             id: ex.id,
             name: ex.name,
@@ -882,11 +883,11 @@ export default function TreinoPage() {
         });
         
         const workoutToSaveFormatted: any = {
-          dayOfWeek: workoutToSave.dayOfWeek,
-          dayLabel: workoutToSave.dayLabel,
-          muscleGroup: workoutToSave.muscleGroup,
+          dayOfWeek: workout.dayOfWeek,
+          dayLabel: workout.dayLabel,
+          muscleGroup: workout.muscleGroup,
           exercises: exercisesFormatted,
-          isWeekend: workoutToSave.isWeekend,
+          isWeekend: workout.isWeekend,
         };
         
         console.log("Salvando treino do dia:", dateKey, workoutToSaveFormatted);
