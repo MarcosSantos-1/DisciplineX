@@ -434,25 +434,31 @@ export const checklistService = {
   },
 
   // Estado do checklist (checkedIds)
-  async getChecklistState(dateKey: string): Promise<Set<string> | null> {
+  async getChecklistState(dateKey: string): Promise<Set<string>> {
     try {
       const docRef = doc(db, "checklistStates", dateKey);
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
-        const checkedIds = docSnap.data().checkedIds || [];
+        const data = docSnap.data();
+        const checkedIds = data?.checkedIds || [];
+        console.log(`[Firebase] Estado carregado para ${dateKey}:`, checkedIds);
         return new Set(checkedIds);
       }
-      return null;
+      console.log(`[Firebase] Nenhum estado encontrado para ${dateKey}, retornando Set vazio`);
+      return new Set<string>();
     } catch (error) {
       console.error("Erro ao carregar estado do checklist:", error);
-      return null;
+      return new Set<string>();
     }
   },
 
   async saveChecklistState(dateKey: string, checkedIds: Set<string>): Promise<void> {
     try {
       const docRef = doc(db, "checklistStates", dateKey);
-      await setDoc(docRef, { checkedIds: Array.from(checkedIds), date: dateKey });
+      const checkedIdsArray = Array.from(checkedIds);
+      console.log(`[Firebase] Salvando checklistState para ${dateKey}:`, checkedIdsArray);
+      await setDoc(docRef, { checkedIds: checkedIdsArray, date: dateKey });
+      console.log(`[Firebase] ChecklistState salvo com sucesso para ${dateKey}`);
     } catch (error) {
       console.error("Erro ao salvar estado do checklist:", error);
       throw error;

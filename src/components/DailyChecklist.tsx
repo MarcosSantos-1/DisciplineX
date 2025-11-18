@@ -195,10 +195,8 @@ export function DailyChecklist({ date, onScoreChange, onAddSpecialCheck }: Daily
       // Carregar estado salvo do dia do Firebase
       let initialCheckedIds = new Set<string>();
       try {
-        const savedState = await checklistService.getChecklistState(dateKey);
-        if (savedState) {
-          initialCheckedIds = savedState;
-        }
+        initialCheckedIds = await checklistService.getChecklistState(dateKey);
+        console.log(`[DailyChecklist] Estado carregado para ${dateKey}:`, Array.from(initialCheckedIds));
       } catch (e) {
         console.error("Erro ao carregar estado do checklist:", e);
       }
@@ -267,6 +265,7 @@ export function DailyChecklist({ date, onScoreChange, onAddSpecialCheck }: Daily
   }, [dateKey, date]);
 
   // Calcular e salvar score quando mudar (sem disparar eventos que causam loops)
+  // NOTA: Este useEffect é um backup. O salvamento principal acontece no handleToggle
   useEffect(() => {
     if (items.length === 0) return; // Não calcular se não tiver items ainda
     
@@ -276,50 +275,64 @@ export function DailyChecklist({ date, onScoreChange, onAddSpecialCheck }: Daily
       const score = calculateScore(items, checkedIds, isWeekend);
       
       try {
-        // Salvar estado no Firebase
+        // Salvar estado no Firebase (backup)
         await checklistService.saveChecklistState(dateKey, checkedIds);
 
         // Salvar checklist completo com score no Firebase
         await checklistService.saveDailyChecklist(dateKey, items, score);
+        
+        // Notificar mudança de score (sem causar loop)
+        if (onScoreChange) {
+          onScoreChange(score);
+        }
       } catch (e) {
-        console.error("Erro ao salvar checklist:", e);
-      }
-
-      // Notificar mudança de score (sem causar loop)
-      if (onScoreChange) {
-        onScoreChange(score);
+        console.error("Erro ao salvar checklist no useEffect:", e);
       }
     };
 
-    saveChecklist();
+    // Usar um pequeno delay para evitar múltiplos salvamentos
+    const timeoutId = setTimeout(() => {
+      saveChecklist();
+    }, 300);
+
+    return () => clearTimeout(timeoutId);
   }, [checkedIds, items, dateKey, date, onScoreChange]);
 
   const handleToggle = async (itemId: string) => {
+    console.log(`[DailyChecklist] handleToggle chamado para ${itemId} no dia ${dateKey}`);
+    console.log(`[DailyChecklist] Estado atual:`, Array.from(checkedIds));
+    
     const newCheckedIds = new Set(checkedIds);
     if (newCheckedIds.has(itemId)) {
       newCheckedIds.delete(itemId);
+      console.log(`[DailyChecklist] Removendo ${itemId}`);
     } else {
       newCheckedIds.add(itemId);
+      console.log(`[DailyChecklist] Adicionando ${itemId}`);
     }
     
+    console.log(`[DailyChecklist] Novo estado:`, Array.from(newCheckedIds));
     setCheckedIds(newCheckedIds);
     
     // Salvar imediatamente no Firebase
     try {
+      console.log(`[DailyChecklist] Salvando estado para ${dateKey}:`, Array.from(newCheckedIds));
       await checklistService.saveChecklistState(dateKey, newCheckedIds);
+      console.log(`[DailyChecklist] Estado salvo com sucesso para ${dateKey}`);
       
       // Recalcular e salvar score
       const dayOfWeek = date.getDay();
       const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
       const score = calculateScore(items, newCheckedIds, isWeekend);
       await checklistService.saveDailyChecklist(dateKey, items, score);
+      console.log(`[DailyChecklist] Score calculado e salvo: ${score}`);
       
       // Notificar mudança de score
       if (onScoreChange) {
         onScoreChange(score);
       }
     } catch (e) {
-      console.error("Erro ao salvar checklist:", e);
+      console.error("[DailyChecklist] Erro ao salvar checklist:", e);
     }
   };
 
