@@ -16,6 +16,7 @@ import {
   calculateAge,
   UserProfile
 } from "@/types/meals";
+import { checklistService, workoutService, mealService } from "@/lib/firebaseService";
 
 function getDaysInMonth(year: number, month: number): Date[] {
   const firstDay = new Date(year, month, 1);
@@ -29,22 +30,18 @@ function getDaysInMonth(year: number, month: number): Date[] {
   return days;
 }
 
-function getDayScore(date: Date): number | null {
+async function getDayScore(date: Date): Promise<number | null> {
   // Verificar se estamos no navegador
   if (typeof window === "undefined") return null;
   
-  // Carregar score do checklist do dia
+  // Carregar score do checklist do dia do Firebase
   const dateKey = date.toISOString().split("T")[0];
-  const saved = localStorage.getItem(`daily_checklist_${dateKey}`);
-  if (saved) {
-    try {
-      const parsed = JSON.parse(saved);
-      return parsed.score || null;
-    } catch (e) {
-      console.error("Erro ao carregar score:", e);
-    }
+  try {
+    return await checklistService.getDailyChecklistScore(dateKey);
+  } catch (e) {
+    console.error("Erro ao carregar score:", e);
+    return null;
   }
-  return null;
 }
 
 // Meta calórica diária
@@ -67,20 +64,16 @@ const USER_PROFILE: UserProfile = {
 const BASAL_METABOLIC_RATE = calculateBMR(USER_PROFILE);
 
 // Calcular gasto total do dia (TMB + atividades)
-function calculateDailyExpenditure(dateKey: string): number {
+async function calculateDailyExpenditure(dateKey: string): Promise<number> {
   // Verificar se estamos no navegador
   if (typeof window === "undefined") return BASAL_METABOLIC_RATE;
   
-  // Carregar atividades do localStorage (depois virá do Firebase)
-  const saved = localStorage.getItem(`activities_${dateKey}`);
+  // Carregar atividades do Firebase
   let activities: PhysicalActivity[] = [];
-  
-  if (saved) {
-    try {
-      activities = JSON.parse(saved);
-    } catch (e) {
-      console.error("Erro ao carregar atividades:", e);
-    }
+  try {
+    activities = await workoutService.getActivities(dateKey);
+  } catch (e) {
+    console.error("Erro ao carregar atividades:", e);
   }
 
   // Calcular calorias queimadas nas atividades
@@ -93,7 +86,7 @@ function calculateDailyExpenditure(dateKey: string): number {
   return BASAL_METABOLIC_RATE + activityCalories;
 }
 
-function calculateNutritionFromMeals(
+async function calculateNutritionFromMeals(
   selectedMeals: SelectedMeal[],
   dateKey: string
 ) {
@@ -112,20 +105,16 @@ function calculateNutritionFromMeals(
   let totalCarbs = 0;
   let totalFat = 0;
 
-  // Função para obter opções customizadas de um slot
-  const getCustomOptions = (slotId: string): any[] => {
+  // Função para obter opções customizadas de um slot do Firebase
+  const getCustomOptions = async (slotId: string): Promise<any[]> => {
     // Verificar se estamos no navegador
     if (typeof window === "undefined") return [];
     
-    const saved = localStorage.getItem(`custom_options_${slotId}`);
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        return [];
-      }
+    try {
+      return await mealService.getCustomOptions(slotId);
+    } catch (e) {
+      return [];
     }
-    return [];
   };
 
   console.log("calculateNutritionFromMeals - selectedMeals:", selectedMeals, "dateKey:", dateKey);
@@ -133,7 +122,8 @@ function calculateNutritionFromMeals(
   const filteredMeals = selectedMeals.filter((m) => m.date === dateKey);
   console.log("Refeições filtradas para", dateKey, ":", filteredMeals);
   
-  filteredMeals.forEach((selectedMeal) => {
+  // Processar refeições de forma assíncrona
+  for (const selectedMeal of filteredMeals) {
     console.log("Processando refeição:", selectedMeal);
     const slot = meals.find((s) => s.id === selectedMeal.slotId);
     console.log("Slot encontrado:", slot?.name, "para slotId:", selectedMeal.slotId);
@@ -150,7 +140,7 @@ function calculateNutritionFromMeals(
       
       // Se não encontrar, buscar nas opções customizadas
       if (!option) {
-        const customOptions = getCustomOptions(selectedMeal.slotId);
+        const customOptions = await getCustomOptions(selectedMeal.slotId);
         console.log("Opções customizadas para", selectedMeal.slotId, ":", customOptions);
         option = customOptions.find((o: any) => o.id === selectedMeal.optionId);
         console.log("Opção customizada encontrada:", option?.name);
@@ -168,13 +158,15 @@ function calculateNutritionFromMeals(
     } else {
       console.warn("Slot não encontrado:", selectedMeal.slotId);
     }
-  });
+  }
+
+  const burned = await calculateDailyExpenditure(dateKey);
 
   return {
     calories: {
       consumed: totalCalories,
       limit: DAILY_CALORIE_GOAL,
-      burned: calculateDailyExpenditure(dateKey),
+      burned: burned,
     },
     macros: {
       protein: {
@@ -214,76 +206,64 @@ export default function Home() {
   const [specialCheckDate, setSpecialCheckDate] = useState<Date>(today);
 
   const dateKey = selectedDate.toISOString().split("T")[0];
-  
-  // Função para ler refeições diretamente do localStorage (fonte de verdade)
-  const loadMealsFromStorage = useMemo(() => {
-    return () => {
-      // Verificar se estamos no navegador
-      if (typeof window === "undefined") return [];
-      
-      const saved = localStorage.getItem(`meals_${dateKey}`);
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          return parsed;
-        } catch (e) {
-          console.error("Erro ao parsear refeições:", e);
-          return [];
-        }
-      }
-      return [];
-    };
-  }, [dateKey]);
+  const [nutrition, setNutrition] = useState({
+    calories: {
+      consumed: 0,
+      limit: DAILY_CALORIE_GOAL,
+      burned: BASAL_METABOLIC_RATE,
+    },
+    macros: {
+      protein: { label: "Proteína", consumed: 0, limit: DAILY_PROTEIN_GOAL, color: "red", gradient: "from-red-400 to-orange-400" },
+      carbs: { label: "Carboidratos", consumed: 0, limit: DAILY_CARBS_GOAL, color: "blue", gradient: "from-blue-400 to-cyan-400" },
+      fat: { label: "Gorduras", consumed: 0, limit: DAILY_FAT_GOAL, color: "yellow", gradient: "from-yellow-400 to-amber-400" },
+    },
+  });
   
   // Recalcular nutrição sempre que selectedMeals ou dateKey mudar
-  // SEMPRE ler do localStorage para garantir sincronização
-  const nutrition = useMemo(() => {
-    // Verificar se estamos no navegador
-    if (typeof window === "undefined") {
-      return {
-        calories: {
-          consumed: 0,
-          limit: DAILY_CALORIE_GOAL,
-          burned: BASAL_METABOLIC_RATE,
-        },
-        macros: {
-          protein: { label: "Proteína", consumed: 0, limit: DAILY_PROTEIN_GOAL, color: "red", gradient: "from-red-400 to-orange-400" },
-          carbs: { label: "Carboidratos", consumed: 0, limit: DAILY_CARBS_GOAL, color: "blue", gradient: "from-blue-400 to-cyan-400" },
-          fat: { label: "Gorduras", consumed: 0, limit: DAILY_FAT_GOAL, color: "yellow", gradient: "from-yellow-400 to-amber-400" },
-        },
-      };
-    }
+  useEffect(() => {
+    const calculateNutrition = async () => {
+      if (typeof window === "undefined") return;
+      
+      // Ler refeições do Firebase
+      let mealsToUse = selectedMeals;
+      try {
+        const mealsFromFirebase = await mealService.getMeals(dateKey);
+        mealsToUse = mealsFromFirebase.length > 0 ? mealsFromFirebase : selectedMeals;
+      } catch (e) {
+        console.error("Erro ao carregar refeições do Firebase:", e);
+      }
+      
+      console.log("Recalculando nutrição para", dateKey);
+      console.log("Refeições do estado:", selectedMeals);
+      console.log("Refeições do Firebase:", mealsToUse);
+      
+      const result = await calculateNutritionFromMeals(mealsToUse, dateKey);
+      console.log("Resultado do cálculo:", result);
+      setNutrition(result);
+    };
     
-    // Ler diretamente do localStorage para garantir que está atualizado
-    const mealsFromStorage = loadMealsFromStorage();
-    console.log("Recalculando nutrição para", dateKey);
-    console.log("Refeições do estado:", selectedMeals);
-    console.log("Refeições do localStorage:", mealsFromStorage);
-    
-    // Usar refeições do localStorage como fonte de verdade
-    const mealsToUse = mealsFromStorage.length > 0 ? mealsFromStorage : selectedMeals;
-    
-    const result = calculateNutritionFromMeals(mealsToUse, dateKey);
-    console.log("Resultado do cálculo:", result);
-    return result;
-  }, [selectedMeals, dateKey, loadMealsFromStorage]);
+    calculateNutrition();
+  }, [selectedMeals, dateKey]);
 
   useEffect(() => {
     // Verificar se estamos no navegador
     if (typeof window === "undefined") return;
     
-    const loadDays = () => {
+    const loadDays = async () => {
       const currentDate = new Date();
       const year = currentDate.getFullYear();
       const month = currentDate.getMonth();
       const days = getDaysInMonth(year, month);
       
-      setMonthDays(
-        days.map((date) => ({
+      // Carregar scores do Firebase
+      const daysWithScores = await Promise.all(
+        days.map(async (date) => ({
           date,
-          score: getDayScore(date),
+          score: await getDayScore(date),
         }))
       );
+      
+      setMonthDays(daysWithScores);
     };
 
     loadDays();
@@ -303,20 +283,13 @@ export default function Home() {
     // Verificar se estamos no navegador
     if (typeof window === "undefined") return;
     
-    const loadMeals = () => {
-      const saved = localStorage.getItem(`meals_${dateKey}`);
-      console.log("Carregando refeições para", dateKey, ":", saved);
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          console.log("Refeições parseadas:", parsed);
-          setSelectedMeals(parsed);
-        } catch (e) {
-          console.error("Erro ao carregar refeições:", e);
-          setSelectedMeals([]);
-        }
-      } else {
-        console.log("Nenhuma refeição salva para", dateKey);
+    const loadMeals = async () => {
+      try {
+        const meals = await mealService.getMeals(dateKey);
+        console.log("Carregando refeições para", dateKey, ":", meals);
+        setSelectedMeals(meals);
+      } catch (e) {
+        console.error("Erro ao carregar refeições:", e);
         setSelectedMeals([]);
       }
     };
@@ -335,9 +308,7 @@ export default function Home() {
         console.log("Atualizando refeições para", dateKey, ":", e.detail.meals);
         // Atualizar estado E forçar re-render
         setSelectedMeals(e.detail.meals);
-        
-        // Também garantir que o localStorage está sincronizado
-        localStorage.setItem(`meals_${dateKey}`, JSON.stringify(e.detail.meals));
+        // Firebase já está sincronizado pelo MealChecklist
       } else {
         console.log("Ignorando evento - dateKey diferente:", e.detail.dateKey, "!=", dateKey);
       }
@@ -355,15 +326,13 @@ export default function Home() {
     // Verificar se estamos no navegador
     if (typeof window === "undefined") return;
     
-    const handleActivitiesUpdate = () => {
+    const handleActivitiesUpdate = async () => {
       // Forçar re-render para atualizar o gasto calórico recarregando refeições
-      const saved = localStorage.getItem(`meals_${dateKey}`);
-      if (saved) {
-        try {
-          setSelectedMeals(JSON.parse(saved));
-        } catch (e) {
-          console.error("Erro ao recarregar refeições:", e);
-        }
+      try {
+        const meals = await mealService.getMeals(dateKey);
+        setSelectedMeals(meals);
+      } catch (e) {
+        console.error("Erro ao recarregar refeições:", e);
       }
     };
 

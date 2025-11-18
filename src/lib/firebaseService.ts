@@ -89,13 +89,15 @@ export type SelectedMeal = {
 };
 
 export type CustomMealOption = {
-  slotId: string;
+  id: string;
+  slotId?: string;
   name: string;
   items: any[];
   totalCalories: number;
   protein: number;
   carbs: number;
   fat: number;
+  image?: string;
 };
 
 export type Recipe = {
@@ -353,13 +355,31 @@ export const checklistService = {
     }
   },
 
-  async saveDailyChecklist(dateKey: string, items: ChecklistItem[]): Promise<void> {
+  async saveDailyChecklist(dateKey: string, items: ChecklistItem[], score?: number): Promise<void> {
     try {
       const docRef = doc(db, "dailyChecklists", dateKey);
-      await setDoc(docRef, { items, date: dateKey });
+      const data: any = { items, date: dateKey };
+      if (score !== undefined) {
+        data.score = score;
+      }
+      await setDoc(docRef, data);
     } catch (error) {
       console.error("Erro ao salvar checklist diário:", error);
       throw error;
+    }
+  },
+  
+  async getDailyChecklistScore(dateKey: string): Promise<number | null> {
+    try {
+      const docRef = doc(db, "dailyChecklists", dateKey);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        return docSnap.data().score || null;
+      }
+      return null;
+    } catch (error) {
+      console.error("Erro ao carregar score do checklist:", error);
+      return null;
     }
   },
 

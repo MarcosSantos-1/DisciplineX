@@ -6,6 +6,7 @@ import { RecipeForm } from "./RecipeForm";
 import { QuickFoodForm } from "./QuickFoodForm";
 import { RecipeCard } from "./RecipeCard";
 import { QuickFoodCard } from "./QuickFoodCard";
+import { libraryService } from "@/lib/firebaseService";
 
 interface RecipeLibraryProps {
   isOpen: boolean;
@@ -31,28 +32,26 @@ export function RecipeLibrary({
   const [selectedQuickFood, setSelectedQuickFood] = useState<QuickFood | null>(null);
   const [activeTab, setActiveTab] = useState<"all" | "recipes" | "quickfoods">("all");
 
-  // Carregar receitas e comidas prontas do localStorage
+  // Carregar receitas e comidas prontas do Firebase
   useEffect(() => {
     if (isOpen) {
-      const savedRecipes = localStorage.getItem("recipe_library");
-      if (savedRecipes) {
+      const loadLibrary = async () => {
         try {
-          const parsed = JSON.parse(savedRecipes);
+          const recipes = await libraryService.getRecipes();
           // Filtrar apenas receitas (com type: "recipe" ou sem type para compatibilidade)
-          setRecipes(parsed.filter((r: any) => !r.type || r.type === "recipe"));
+          setRecipes(recipes.filter((r: any) => !r.type || r.type === "recipe"));
         } catch (e) {
           console.error("Erro ao carregar receitas:", e);
         }
-      }
-      
-      const savedQuickFoods = localStorage.getItem("quickfood_library");
-      if (savedQuickFoods) {
+        
         try {
-          setQuickFoods(JSON.parse(savedQuickFoods));
+          const quickFoods = await libraryService.getQuickFoods();
+          setQuickFoods(quickFoods);
         } catch (e) {
           console.error("Erro ao carregar comidas prontas:", e);
         }
-      }
+      };
+      loadLibrary();
     }
   }, [isOpen]);
 
@@ -88,50 +87,74 @@ export function RecipeLibrary({
     return [...filteredRecipes, ...filteredQuickFoods];
   };
 
-  const handleSaveRecipe = (recipe: Recipe) => {
-    const updated = [...recipes, recipe];
-    setRecipes(updated);
-    localStorage.setItem("recipe_library", JSON.stringify(updated));
-    setShowRecipeForm(false);
+  const handleSaveRecipe = async (recipe: Recipe) => {
+    try {
+      const updated = [...recipes, recipe];
+      setRecipes(updated);
+      await libraryService.saveRecipes(updated);
+      setShowRecipeForm(false);
+    } catch (e) {
+      console.error("Erro ao salvar receita:", e);
+    }
   };
 
-  const handleUpdateRecipe = (updatedRecipe: Recipe) => {
-    const updated = recipes.map((r) =>
-      r.id === updatedRecipe.id ? updatedRecipe : r
-    );
-    setRecipes(updated);
-    localStorage.setItem("recipe_library", JSON.stringify(updated));
-    setSelectedRecipe(null);
+  const handleUpdateRecipe = async (updatedRecipe: Recipe) => {
+    try {
+      const updated = recipes.map((r) =>
+        r.id === updatedRecipe.id ? updatedRecipe : r
+      );
+      setRecipes(updated);
+      await libraryService.saveRecipes(updated);
+      setSelectedRecipe(null);
+    } catch (e) {
+      console.error("Erro ao atualizar receita:", e);
+    }
   };
 
-  const handleDeleteRecipe = (recipeId: string) => {
-    const updated = recipes.filter((r) => r.id !== recipeId);
-    setRecipes(updated);
-    localStorage.setItem("recipe_library", JSON.stringify(updated));
-    setSelectedRecipe(null);
+  const handleDeleteRecipe = async (recipeId: string) => {
+    try {
+      const updated = recipes.filter((r) => r.id !== recipeId);
+      setRecipes(updated);
+      await libraryService.saveRecipes(updated);
+      setSelectedRecipe(null);
+    } catch (e) {
+      console.error("Erro ao deletar receita:", e);
+    }
   };
 
-  const handleSaveQuickFood = (quickFood: QuickFood) => {
-    const updated = [...quickFoods, quickFood];
-    setQuickFoods(updated);
-    localStorage.setItem("quickfood_library", JSON.stringify(updated));
-    setShowQuickFoodForm(false);
+  const handleSaveQuickFood = async (quickFood: QuickFood) => {
+    try {
+      const updated = [...quickFoods, quickFood];
+      setQuickFoods(updated);
+      await libraryService.saveQuickFoods(updated);
+      setShowQuickFoodForm(false);
+    } catch (e) {
+      console.error("Erro ao salvar comida pronta:", e);
+    }
   };
 
-  const handleUpdateQuickFood = (updatedQuickFood: QuickFood) => {
-    const updated = quickFoods.map((qf) =>
-      qf.id === updatedQuickFood.id ? updatedQuickFood : qf
-    );
-    setQuickFoods(updated);
-    localStorage.setItem("quickfood_library", JSON.stringify(updated));
-    setSelectedQuickFood(null);
+  const handleUpdateQuickFood = async (updatedQuickFood: QuickFood) => {
+    try {
+      const updated = quickFoods.map((qf) =>
+        qf.id === updatedQuickFood.id ? updatedQuickFood : qf
+      );
+      setQuickFoods(updated);
+      await libraryService.saveQuickFoods(updated);
+      setSelectedQuickFood(null);
+    } catch (e) {
+      console.error("Erro ao atualizar comida pronta:", e);
+    }
   };
 
-  const handleDeleteQuickFood = (quickFoodId: string) => {
-    const updated = quickFoods.filter((qf) => qf.id !== quickFoodId);
-    setQuickFoods(updated);
-    localStorage.setItem("quickfood_library", JSON.stringify(updated));
-    setSelectedQuickFood(null);
+  const handleDeleteQuickFood = async (quickFoodId: string) => {
+    try {
+      const updated = quickFoods.filter((qf) => qf.id !== quickFoodId);
+      setQuickFoods(updated);
+      await libraryService.saveQuickFoods(updated);
+      setSelectedQuickFood(null);
+    } catch (e) {
+      console.error("Erro ao deletar comida pronta:", e);
+    }
   };
 
   const handleSelectRecipe = (recipe: Recipe) => {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { checklistService } from "@/lib/firebaseService";
 
 type DayData = {
   date: Date;
@@ -26,12 +27,31 @@ export function MonthlyCalendar({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const todayCardRef = useRef<HTMLButtonElement>(null);
   const today = new Date();
+  const [specialChecksMap, setSpecialChecksMap] = useState<Map<string, boolean>>(new Map());
   const todayIndex = days.findIndex(
     (d) =>
       d.date.getDate() === today.getDate() &&
       d.date.getMonth() === today.getMonth() &&
       d.date.getFullYear() === today.getFullYear()
   );
+
+  // Carregar checks especiais para todos os dias
+  useEffect(() => {
+    const loadSpecialChecks = async () => {
+      const checksMap = new Map<string, boolean>();
+      for (const day of days) {
+        const dateKey = day.date.toISOString().split("T")[0];
+        try {
+          const checks = await checklistService.getSpecialChecks(dateKey);
+          checksMap.set(dateKey, checks && checks.length > 0);
+        } catch (e) {
+          checksMap.set(dateKey, false);
+        }
+      }
+      setSpecialChecksMap(checksMap);
+    };
+    loadSpecialChecks();
+  }, [days]);
 
   useEffect(() => {
     // Aguardar o DOM estar completamente renderizado
@@ -150,18 +170,7 @@ export function MonthlyCalendar({
 
           // Verificar se o dia tem missão especial
           const dateKey = day.date.toISOString().split("T")[0];
-          const hasSpecialCheck = (() => {
-            try {
-              const saved = localStorage.getItem(`special_checks_${dateKey}`);
-              if (saved) {
-                const checks = JSON.parse(saved);
-                return checks && checks.length > 0;
-              }
-            } catch (e) {
-              return false;
-            }
-            return false;
-          })();
+          const hasSpecialCheck = specialChecksMap.get(dateKey) || false;
 
           // Verificar se o dia tem score (foi concluído ou não)
           const hasScore = day.score !== null && day.score !== undefined;

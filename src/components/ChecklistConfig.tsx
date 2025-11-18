@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { ChecklistItem } from "@/types/meals";
+import { checklistService } from "@/lib/firebaseService";
 
 interface ChecklistConfigProps {
   onClose?: () => void;
@@ -13,53 +14,87 @@ export function ChecklistConfig({ onClose }: ChecklistConfigProps) {
   const [editLabel, setEditLabel] = useState("");
 
   useEffect(() => {
-    // Carregar checklist padrão
-    const saved = localStorage.getItem("default_checklist");
-    if (saved) {
+    // Carregar checklist padrão do Firebase
+    const loadChecklist = async () => {
       try {
-        setItems(JSON.parse(saved));
+        const defaultItems = await checklistService.getDefaultChecklist();
+        if (defaultItems.length > 0) {
+          setItems(defaultItems);
+        } else {
+          // Valores padrão
+          setItems([
+            {
+              id: "sleep-8h",
+              label: "8h de sono",
+              isSpecial: false,
+              weight: 26.67,
+            },
+            {
+              id: "workout-completed",
+              label: "Treino concluído",
+              isSpecial: false,
+              weight: 26.67,
+            },
+            {
+              id: "no-processed",
+              label: "Sem doces/processados",
+              isSpecial: false,
+              weight: 26.67,
+            },
+            {
+              id: "water-3l",
+              label: "+3L de água",
+              isSpecial: false,
+              weight: 20,
+            },
+          ]);
+        }
       } catch (e) {
         console.error("Erro ao carregar checklist:", e);
+        // Valores padrão em caso de erro
+        setItems([
+          {
+            id: "sleep-8h",
+            label: "8h de sono",
+            isSpecial: false,
+            weight: 26.67,
+          },
+          {
+            id: "workout-completed",
+            label: "Treino concluído",
+            isSpecial: false,
+            weight: 26.67,
+          },
+          {
+            id: "no-processed",
+            label: "Sem doces/processados",
+            isSpecial: false,
+            weight: 26.67,
+          },
+          {
+            id: "water-3l",
+            label: "+3L de água",
+            isSpecial: false,
+            weight: 20,
+          },
+        ]);
       }
-    } else {
-      // Valores padrão
-      setItems([
-        {
-          id: "sleep-8h",
-          label: "8h de sono",
-          isSpecial: false,
-          weight: 26.67,
-        },
-        {
-          id: "workout-completed",
-          label: "Treino concluído",
-          isSpecial: false,
-          weight: 26.67,
-        },
-        {
-          id: "no-processed",
-          label: "Sem doces/processados",
-          isSpecial: false,
-          weight: 26.67,
-        },
-        {
-          id: "water-3l",
-          label: "+3L de água",
-          isSpecial: false,
-          weight: 20,
-        },
-      ]);
-    }
+    };
+    loadChecklist();
   }, []);
 
-  const handleSave = () => {
-    localStorage.setItem("default_checklist", JSON.stringify(items));
-    
-    // Disparar evento para atualizar todos os checklists
-    window.dispatchEvent(new CustomEvent("defaultChecklistUpdated"));
-    
-    if (onClose) {
-      onClose();
+  const handleSave = async () => {
+    try {
+      await checklistService.saveDefaultChecklist(items);
+      
+      // Disparar evento para atualizar todos os checklists
+      window.dispatchEvent(new CustomEvent("defaultChecklistUpdated"));
+      
+      if (onClose) {
+        onClose();
+      }
+    } catch (e) {
+      console.error("Erro ao salvar checklist:", e);
     }
   };
 

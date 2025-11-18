@@ -4,6 +4,7 @@ import { useState, useEffect, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { ChecklistConfig } from "@/components/ChecklistConfig";
 import { calculateBMR, UserProfile, PhysicalActivity } from "@/types/meals";
+import { profileService, checklistService, workoutService, mealService, libraryService } from "@/lib/firebaseService";
 
 type WeightEntry = {
   date: string; // YYYY-MM-DD
@@ -277,65 +278,62 @@ function PerfilPageContent() {
       setActiveTab("settings");
     }
   }, [searchParams]);
-  // Carregar peso atual do localStorage ou usar padrão
-  const loadCurrentWeight = (): number => {
-    const saved = localStorage.getItem("current_weight");
-    if (saved) {
-      try {
-        return Number(saved);
-      } catch (e) {
-        return 92;
-      }
-    }
-    return 92;
-  };
-
-  // Carregar histórico de peso do localStorage
-  const loadWeightHistory = (): WeightEntry[] => {
-    const saved = localStorage.getItem("weight_history");
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        return [];
-      }
-    }
-    // Se não tiver histórico, criar entrada inicial com peso atual
-    const initialWeight = loadCurrentWeight();
-    return [{
-      date: new Date().toISOString().split("T")[0],
-      weight: initialWeight,
-      timestamp: Date.now(),
-    }];
-  };
-
-  const [currentWeight, setCurrentWeight] = useState(loadCurrentWeight());
-  const [targetWeight, setTargetWeight] = useState(() => {
-    const saved = localStorage.getItem("target_weight");
-    return saved ? Number(saved) : 72;
+  const [currentWeight, setCurrentWeight] = useState(92);
+  const [targetWeight, setTargetWeight] = useState(72);
+  const [anthropometry, setAnthropometry] = useState<AnthropometryData>({
+    weight: 94,
+    leanMass: 63.4,
+    fatMass: 31.2,
+    fatPercentage: 33,
+    lastMeasurementDate: new Date(2024, 10, 10),
   });
-  const [anthropometry, setAnthropometry] = useState<AnthropometryData>(() => {
-    const saved = localStorage.getItem("anthropometry");
-    if (saved) {
+  const [weightHistory, setWeightHistory] = useState<WeightEntry[]>([]);
+
+  // Carregar dados do Firebase
+  useEffect(() => {
+    const loadData = async () => {
       try {
-        const data = JSON.parse(saved);
-        return {
-          ...data,
-          lastMeasurementDate: new Date(data.lastMeasurementDate),
-        };
+        const weight = await profileService.getCurrentWeight();
+        setCurrentWeight(weight);
       } catch (e) {
-        // Fallback para valores padrão
+        console.error("Erro ao carregar peso atual:", e);
       }
-    }
-    return {
-      weight: 94,
-      leanMass: 63.4,
-      fatMass: 31.2,
-      fatPercentage: 33,
-      lastMeasurementDate: new Date(2024, 10, 10),
+      
+      try {
+        const target = await profileService.getTargetWeight();
+        setTargetWeight(target);
+      } catch (e) {
+        console.error("Erro ao carregar meta de peso:", e);
+      }
+      
+      try {
+        const history = await profileService.getWeightHistory();
+        if (history.length > 0) {
+          setWeightHistory(history);
+        } else {
+          // Criar entrada inicial
+          const initialEntry: WeightEntry = {
+            date: new Date().toISOString().split("T")[0],
+            weight: currentWeight,
+            timestamp: Date.now(),
+          };
+          setWeightHistory([initialEntry]);
+        }
+      } catch (e) {
+        console.error("Erro ao carregar histórico de peso:", e);
+      }
+      
+      try {
+        const anthro = await profileService.getAnthropometry();
+        if (anthro) {
+          setAnthropometry(anthro);
+        }
+      } catch (e) {
+        console.error("Erro ao carregar antropometria:", e);
+      }
     };
-  });
-  const [weightHistory, setWeightHistory] = useState<WeightEntry[]>(loadWeightHistory());
+    loadData();
+  }, []);
 
   // Converter histórico de peso para pontos do gráfico
   const progress: ProgressPoint[] = weightHistory
@@ -360,51 +358,160 @@ function PerfilPageContent() {
   const [isAnthropometryModalOpen, setIsAnthropometryModalOpen] = useState(false);
   const [isCurrentWeightModalOpen, setIsCurrentWeightModalOpen] = useState(false);
   const [isTargetWeightModalOpen, setIsTargetWeightModalOpen] = useState(false);
+  const [anthropometryHistory, setAnthropometryHistory] = useState<any[]>([]);
+  const [weeklyMetrics, setWeeklyMetrics] = useState<{
+    expenditures: number[];
+    consumed: number[];
+    deficits: number[];
+  }>({ expenditures: [], consumed: [], deficits: [] });
 
-  const handleAnthropometrySave = (data: AnthropometryData) => {
-    setAnthropometry(data);
-    localStorage.setItem("anthropometry", JSON.stringify(data));
-    
-    // Salvar no histórico de antropometria
-    const anthropometryHistory = (() => {
-      const saved = localStorage.getItem("anthropometry_history");
-      if (saved) {
-        try {
-          return JSON.parse(saved);
-        } catch (e) {
-          return [];
+  // Carregar histórico de antropometria
+  useEffect(() => {
+    const loadHistory = async () => {
+      try {
+        const history = await profileService.getAnthropometryHistory();
+        if (history.length > 0) {
+          setAnthropometryHistory(history);
+        } else if (anthropometry.lastMeasurementDate) {
+          // Se não tiver histórico, usar dados atuais como primeira entrada
+          setAnthropometryHistory([{
+            date: anthropometry.lastMeasurementDate.toISOString().split("T")[0],
+            leanMass: anthropometry.leanMass,
+            fatPercentage: anthropometry.fatPercentage,
+            weight: anthropometry.weight,
+          }]);
         }
+      } catch (e) {
+        console.error("Erro ao carregar histórico de antropometria:", e);
       }
-      return [];
-    })();
+    };
+    loadHistory();
+  }, [anthropometry]);
 
-    const dateKey = data.lastMeasurementDate.toISOString().split("T")[0];
-    const newEntry = {
-      date: dateKey,
-      leanMass: data.leanMass,
-      fatPercentage: data.fatPercentage,
-      weight: data.weight,
-      fatMass: data.fatMass,
+  // Calcular métricas semanais do Firebase
+  useEffect(() => {
+    if (activeTab !== "reports") return;
+    
+    const calculateMetrics = async () => {
+      const today = new Date();
+      const lastWeekStart = new Date(today);
+      lastWeekStart.setDate(today.getDate() - 7);
+      
+      const weeklyExpenditures: number[] = [];
+      const weeklyConsumed: number[] = [];
+      const weeklyDeficits: number[] = [];
+
+      const currentUserProfile: UserProfile = {
+        weight: currentWeight,
+        height: 165,
+        birthDate: "2003-06-15",
+        gender: "male",
+        leanBodyMass: anthropometry.leanMass,
+      };
+      const currentBMR = calculateBMR(currentUserProfile);
+
+      // Carregar receitas e quick foods uma vez
+      let recipes: any[] = [];
+      let quickFoods: any[] = [];
+      try {
+        recipes = await libraryService.getRecipes();
+        quickFoods = await libraryService.getQuickFoods();
+      } catch (e) {
+        console.error("Erro ao carregar receitas/quickfoods:", e);
+      }
+
+      for (let i = 0; i < 7; i++) {
+        const date = new Date(lastWeekStart);
+        date.setDate(lastWeekStart.getDate() + i);
+        const dateKey = date.toISOString().split("T")[0];
+
+        // Calcular gasto do dia do Firebase
+        let dailyExpenditure = currentBMR;
+        try {
+          const activities = await workoutService.getActivities(dateKey);
+          const activityCalories = activities.reduce((sum, a) => sum + a.caloriesBurned, 0);
+          dailyExpenditure = currentBMR + activityCalories;
+        } catch (e) {
+          // Usar BMR como padrão
+        }
+        weeklyExpenditures.push(dailyExpenditure);
+
+        // Calcular consumido do dia do Firebase
+        let consumed = 0;
+        try {
+          const selectedMeals = await mealService.getMeals(dateKey);
+          
+          selectedMeals.forEach((meal: any) => {
+            // Procurar na receita ou quick food
+            const recipe = recipes.find((r: any) => r.id === meal.optionId);
+            const quickFood = quickFoods.find((qf: any) => qf.id === meal.optionId);
+            
+            if (recipe) {
+              consumed += recipe.totalCalories || 0;
+            } else if (quickFood) {
+              consumed += quickFood.totalCalories || 0;
+            }
+          });
+        } catch (e) {
+          consumed = 0;
+        }
+        weeklyConsumed.push(consumed);
+
+        // Calcular déficit
+        const deficit = dailyExpenditure - consumed;
+        weeklyDeficits.push(deficit);
+      }
+
+      setWeeklyMetrics({
+        expenditures: weeklyExpenditures,
+        consumed: weeklyConsumed,
+        deficits: weeklyDeficits,
+      });
     };
 
-    // Verificar se já existe entrada para esta data
-    const existingIndex = anthropometryHistory.findIndex((e: any) => e.date === dateKey);
-    if (existingIndex >= 0) {
-      anthropometryHistory[existingIndex] = newEntry;
-    } else {
-      anthropometryHistory.push(newEntry);
-    }
+    calculateMetrics();
+  }, [activeTab, currentWeight, anthropometry]);
 
-    // Ordenar por data
-    anthropometryHistory.sort((a: any, b: any) => a.date.localeCompare(b.date));
-    localStorage.setItem("anthropometry_history", JSON.stringify(anthropometryHistory));
+  const handleAnthropometrySave = async (data: AnthropometryData) => {
+    setAnthropometry(data);
     
-    // Atualizar também o peso atual quando atualizar antropometria
-    const measurementDate = data.lastMeasurementDate;
-    addWeightEntry(data.weight, measurementDate);
+    try {
+      // Salvar antropometria no Firebase
+      await profileService.saveAnthropometry(data);
+      
+      // Salvar no histórico de antropometria
+      let anthropometryHistory = await profileService.getAnthropometryHistory();
+      
+      const dateKey = data.lastMeasurementDate.toISOString().split("T")[0];
+      const newEntry = {
+        date: dateKey,
+        leanMass: data.leanMass,
+        fatPercentage: data.fatPercentage,
+        weight: data.weight,
+        fatMass: data.fatMass,
+      };
+
+      // Verificar se já existe entrada para esta data
+      const existingIndex = anthropometryHistory.findIndex((e: any) => e.date === dateKey);
+      if (existingIndex >= 0) {
+        anthropometryHistory[existingIndex] = newEntry;
+      } else {
+        anthropometryHistory.push(newEntry);
+      }
+
+      // Ordenar por data
+      anthropometryHistory.sort((a: any, b: any) => a.date.localeCompare(b.date));
+      await profileService.saveAnthropometryHistory(anthropometryHistory);
+      
+      // Atualizar também o peso atual quando atualizar antropometria
+      const measurementDate = data.lastMeasurementDate;
+      await addWeightEntry(data.weight, measurementDate);
+    } catch (e) {
+      console.error("Erro ao salvar antropometria:", e);
+    }
   };
 
-  const addWeightEntry = (weight: number, date?: Date) => {
+  const addWeightEntry = async (weight: number, date?: Date) => {
     const entryDate = date || new Date();
     const dateKey = entryDate.toISOString().split("T")[0];
     
@@ -430,13 +537,19 @@ function PerfilPageContent() {
     updatedHistory.sort((a, b) => a.timestamp - b.timestamp);
     
     setWeightHistory(updatedHistory);
-    localStorage.setItem("weight_history", JSON.stringify(updatedHistory));
     
-    // Atualizar peso atual se for a data mais recente
-    const latestEntry = updatedHistory[updatedHistory.length - 1];
-    if (latestEntry.date === dateKey) {
-      setCurrentWeight(weight);
-      localStorage.setItem("current_weight", weight.toString());
+    try {
+      // Salvar histórico no Firebase
+      await profileService.saveWeightHistory(updatedHistory);
+      
+      // Atualizar peso atual se for a data mais recente
+      const latestEntry = updatedHistory[updatedHistory.length - 1];
+      if (latestEntry.date === dateKey) {
+        setCurrentWeight(weight);
+        await profileService.saveCurrentWeight(weight);
+      }
+    } catch (e) {
+      console.error("Erro ao salvar peso:", e);
     }
   };
 
@@ -652,41 +765,90 @@ function PerfilPageContent() {
         const lastMonthStart = new Date(today);
         lastMonthStart.setMonth(today.getMonth() - 1);
 
-        // Função para obter score de um dia
-        const getDayScore = (date: Date): number | null => {
+        // Função para obter score de um dia do Firebase
+        const getDayScore = async (date: Date): Promise<number | null> => {
           const dateKey = date.toISOString().split("T")[0];
-          const saved = localStorage.getItem(`daily_checklist_${dateKey}`);
-          if (saved) {
-            try {
-              const parsed = JSON.parse(saved);
-              return parsed.score || null;
-            } catch (e) {
-              return null;
-            }
+          try {
+            return await checklistService.getDailyChecklistScore(dateKey);
+          } catch (e) {
+            return null;
           }
-          return null;
         };
 
-        // Função para verificar se treino foi completado
-        const isWorkoutCompleted = (date: Date): boolean => {
+        // Função para verificar se treino foi completado do Firebase
+        const isWorkoutCompleted = async (date: Date): Promise<boolean> => {
           const dateKey = date.toISOString().split("T")[0];
-          const saved = localStorage.getItem(`workout_${dateKey}`);
-          if (saved) {
-            try {
-              const workout = JSON.parse(saved);
-              if (workout.exercises && workout.exercises.length > 0) {
-                return workout.exercises.every((ex: any) => ex.completed === true);
-              }
-            } catch (e) {
-              return false;
+          try {
+            const workout = await workoutService.getWorkout(dateKey);
+            if (workout && workout.exercises && workout.exercises.length > 0) {
+              return workout.exercises.every((ex: any) => ex.completed === true);
             }
+          } catch (e) {
+            return false;
           }
           return false;
         };
 
-        // Calcular dados da última semana
-        const weeklyScores: number[] = [];
-        const weeklyWorkouts: { completed: number; total: number } = { completed: 0, total: 0 };
+        // Calcular dados da última semana (será calculado assincronamente)
+        const [weeklyReportData, setWeeklyReportData] = useState<{
+          scores: number[];
+          workouts: { completed: number; total: number };
+          avgScore: number | null;
+        }>({ scores: [], workouts: { completed: 0, total: 0 }, avgScore: null });
+
+        useEffect(() => {
+          const calculateWeeklyData = async () => {
+            const weeklyScores: number[] = [];
+            const weeklyWorkouts: { completed: number; total: number } = { completed: 0, total: 0 };
+
+            const dates = Array.from({ length: 7 }, (_, i) => {
+              const date = new Date(lastWeekStart);
+              date.setDate(lastWeekStart.getDate() + i);
+              return date;
+            });
+
+            // Calcular scores e treinos em paralelo
+            const results = await Promise.all(
+              dates.map(async (date) => {
+                const score = await getDayScore(date);
+                const dayOfWeek = date.getDay();
+                const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+                const workoutCompleted = !isWeekend ? await isWorkoutCompleted(date) : false;
+                
+                return { score, isWeekend, workoutCompleted };
+              })
+            );
+
+            results.forEach((result) => {
+              if (result.score !== null) {
+                weeklyScores.push(result.score);
+              }
+              if (!result.isWeekend) {
+                weeklyWorkouts.total++;
+                if (result.workoutCompleted) {
+                  weeklyWorkouts.completed++;
+                }
+              }
+            });
+
+            const weeklyAvgScore = weeklyScores.length > 0
+              ? Math.round(weeklyScores.reduce((a, b) => a + b, 0) / weeklyScores.length)
+              : null;
+
+            setWeeklyReportData({
+              scores: weeklyScores,
+              workouts: weeklyWorkouts,
+              avgScore: weeklyAvgScore,
+            });
+          };
+
+          calculateWeeklyData();
+        }, [lastWeekStart]);
+
+        const weeklyScores = weeklyReportData.scores;
+        const weeklyWorkouts = weeklyReportData.workouts;
+        const weeklyAvgScore = weeklyReportData.avgScore;
+        
         const weeklyWeightChange = (() => {
           const weekAgo = new Date(today);
           weekAgo.setDate(today.getDate() - 7);
@@ -702,31 +864,67 @@ function PerfilPageContent() {
           return null;
         })();
 
-        for (let i = 0; i < 7; i++) {
-          const date = new Date(lastWeekStart);
-          date.setDate(lastWeekStart.getDate() + i);
-          const score = getDayScore(date);
-          if (score !== null) {
-            weeklyScores.push(score);
-          }
-          
-          // Contar treinos (apenas dias de semana)
-          const dayOfWeek = date.getDay();
-          if (dayOfWeek !== 0 && dayOfWeek !== 6) {
-            weeklyWorkouts.total++;
-            if (isWorkoutCompleted(date)) {
-              weeklyWorkouts.completed++;
-            }
-          }
-        }
+        // Calcular dados do último mês (será calculado assincronamente)
+        const [monthlyReportData, setMonthlyReportData] = useState<{
+          scores: number[];
+          workouts: { completed: number; total: number };
+          avgScore: number | null;
+        }>({ scores: [], workouts: { completed: 0, total: 0 }, avgScore: null });
 
-        const weeklyAvgScore = weeklyScores.length > 0
-          ? Math.round(weeklyScores.reduce((a, b) => a + b, 0) / weeklyScores.length)
-          : null;
+        useEffect(() => {
+          const calculateMonthlyData = async () => {
+            const monthlyScores: number[] = [];
+            const monthlyWorkouts: { completed: number; total: number } = { completed: 0, total: 0 };
 
-        // Calcular dados do último mês
-        const monthlyScores: number[] = [];
-        const monthlyWorkouts: { completed: number; total: number } = { completed: 0, total: 0 };
+            const daysInMonth = Math.floor((today.getTime() - lastMonthStart.getTime()) / (1000 * 60 * 60 * 24));
+            const dates = Array.from({ length: daysInMonth }, (_, i) => {
+              const date = new Date(lastMonthStart);
+              date.setDate(lastMonthStart.getDate() + i);
+              return date;
+            });
+
+            // Calcular scores e treinos em paralelo
+            const results = await Promise.all(
+              dates.map(async (date) => {
+                const score = await getDayScore(date);
+                const dayOfWeek = date.getDay();
+                const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+                const workoutCompleted = !isWeekend ? await isWorkoutCompleted(date) : false;
+                
+                return { score, isWeekend, workoutCompleted };
+              })
+            );
+
+            results.forEach((result) => {
+              if (result.score !== null) {
+                monthlyScores.push(result.score);
+              }
+              if (!result.isWeekend) {
+                monthlyWorkouts.total++;
+                if (result.workoutCompleted) {
+                  monthlyWorkouts.completed++;
+                }
+              }
+            });
+
+            const monthlyAvgScore = monthlyScores.length > 0
+              ? Math.round(monthlyScores.reduce((a, b) => a + b, 0) / monthlyScores.length)
+              : null;
+
+            setMonthlyReportData({
+              scores: monthlyScores,
+              workouts: monthlyWorkouts,
+              avgScore: monthlyAvgScore,
+            });
+          };
+
+          calculateMonthlyData();
+        }, [lastMonthStart, today]);
+
+        const monthlyScores = monthlyReportData.scores;
+        const monthlyWorkouts = monthlyReportData.workouts;
+        const monthlyAvgScore = monthlyReportData.avgScore;
+        
         const monthlyWeightChange = (() => {
           const monthAgoKey = lastMonthStart.toISOString().split("T")[0];
           const todayKey = today.toISOString().split("T")[0];
@@ -739,29 +937,6 @@ function PerfilPageContent() {
           }
           return null;
         })();
-
-        const daysInMonth = Math.floor((today.getTime() - lastMonthStart.getTime()) / (1000 * 60 * 60 * 24));
-        for (let i = 0; i < daysInMonth; i++) {
-          const date = new Date(lastMonthStart);
-          date.setDate(lastMonthStart.getDate() + i);
-          const score = getDayScore(date);
-          if (score !== null) {
-            monthlyScores.push(score);
-          }
-          
-          // Contar treinos (apenas dias de semana)
-          const dayOfWeek = date.getDay();
-          if (dayOfWeek !== 0 && dayOfWeek !== 6) {
-            monthlyWorkouts.total++;
-            if (isWorkoutCompleted(date)) {
-              monthlyWorkouts.completed++;
-            }
-          }
-        }
-
-        const monthlyAvgScore = monthlyScores.length > 0
-          ? Math.round(monthlyScores.reduce((a, b) => a + b, 0) / monthlyScores.length)
-          : null;
 
         return (
           <section className="glass-panel rounded-3xl p-4">
@@ -867,27 +1042,6 @@ function PerfilPageContent() {
 
               {/* Antropometria e Composição Corporal */}
               {(() => {
-                // Carregar histórico de antropometria
-                const anthropometryHistory = (() => {
-                  const saved = localStorage.getItem("anthropometry_history");
-                  if (saved) {
-                    try {
-                      return JSON.parse(saved);
-                    } catch (e) {
-                      return [];
-                    }
-                  }
-                  // Se não tiver histórico, usar dados atuais como primeira entrada
-                  if (anthropometry.lastMeasurementDate) {
-                    return [{
-                      date: anthropometry.lastMeasurementDate.toISOString().split("T")[0],
-                      leanMass: anthropometry.leanMass,
-                      fatPercentage: anthropometry.fatPercentage,
-                      weight: anthropometry.weight,
-                    }];
-                  }
-                  return [];
-                })();
 
                 const firstMeasurement = anthropometryHistory.length > 0 ? anthropometryHistory[0] : null;
                 const latestMeasurement = anthropometryHistory.length > 0 
@@ -961,64 +1115,10 @@ function PerfilPageContent() {
                 };
                 const currentBMR = calculateBMR(currentUserProfile);
 
-                // Calcular médias da última semana
-                const weeklyExpenditures: number[] = [];
-                const weeklyConsumed: number[] = [];
-                const weeklyDeficits: number[] = [];
-
-                for (let i = 0; i < 7; i++) {
-                  const date = new Date(lastWeekStart);
-                  date.setDate(lastWeekStart.getDate() + i);
-                  const dateKey = date.toISOString().split("T")[0];
-
-                  // Calcular gasto do dia
-                  const savedActivities = localStorage.getItem(`activities_${dateKey}`);
-                  let activities: PhysicalActivity[] = [];
-                  if (savedActivities) {
-                    try {
-                      activities = JSON.parse(savedActivities);
-                    } catch (e) {
-                      activities = [];
-                    }
-                  }
-                  const activityCalories = activities.reduce((sum, a) => sum + a.caloriesBurned, 0);
-                  const dailyExpenditure = currentBMR + activityCalories;
-                  weeklyExpenditures.push(dailyExpenditure);
-
-                  // Calcular consumido do dia - ler de selectedMeals
-                  const savedSelectedMeals = localStorage.getItem("selectedMeals");
-                  let consumed = 0;
-                  if (savedSelectedMeals) {
-                    try {
-                      const selectedMeals = JSON.parse(savedSelectedMeals);
-                      const dayMeals = selectedMeals.filter((m: any) => m.date === dateKey);
-                      
-                      // Calcular calorias das refeições selecionadas
-                      // Ler receitas e quick foods do localStorage
-                      const recipes = JSON.parse(localStorage.getItem("recipe_library") || "[]");
-                      const quickFoods = JSON.parse(localStorage.getItem("quickfood_library") || "[]");
-                      
-                      dayMeals.forEach((meal: any) => {
-                        // Procurar na receita ou quick food
-                        const recipe = recipes.find((r: any) => r.id === meal.optionId);
-                        const quickFood = quickFoods.find((qf: any) => qf.id === meal.optionId);
-                        
-                        if (recipe) {
-                          consumed += recipe.totalCalories || 0;
-                        } else if (quickFood) {
-                          consumed += quickFood.totalCalories || 0;
-                        }
-                      });
-                    } catch (e) {
-                      consumed = 0;
-                    }
-                  }
-                  weeklyConsumed.push(consumed);
-
-                  // Calcular déficit
-                  const deficit = dailyExpenditure - consumed;
-                  weeklyDeficits.push(deficit);
-                }
+                // Usar métricas semanais do estado
+                const weeklyExpenditures = weeklyMetrics.expenditures;
+                const weeklyConsumed = weeklyMetrics.consumed;
+                const weeklyDeficits = weeklyMetrics.deficits;
 
                 const avgExpenditure = weeklyExpenditures.length > 0
                   ? Math.round(weeklyExpenditures.reduce((a, b) => a + b, 0) / weeklyExpenditures.length)
@@ -1151,7 +1251,7 @@ function PerfilPageContent() {
         label="Meta"
         onSave={(value) => {
           setTargetWeight(value);
-          localStorage.setItem("target_weight", value.toString());
+          profileService.saveTargetWeight(value).catch(e => console.error("Erro ao salvar meta de peso:", e));
         }}
         includeDate={false}
       />

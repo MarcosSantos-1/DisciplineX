@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { ChecklistItem } from "@/types/meals";
+import { checklistService } from "@/lib/firebaseService";
 
 interface AddSpecialCheckModalProps {
   date: Date;
@@ -16,7 +17,7 @@ export function AddSpecialCheckModal({
 }: AddSpecialCheckModalProps) {
   const [label, setLabel] = useState("");
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     if (!label.trim()) {
       alert("Digite um nome para a missão especial");
       return;
@@ -31,26 +32,21 @@ export function AddSpecialCheckModal({
       date: dateKey,
     };
 
-    // Carregar checks especiais existentes do dia
-    const saved = localStorage.getItem(`special_checks_${dateKey}`);
-    let existingItems: ChecklistItem[] = [];
-    if (saved) {
-      try {
-        existingItems = JSON.parse(saved);
-      } catch (e) {
-        console.error("Erro ao carregar checks especiais:", e);
-      }
+    try {
+      // Carregar checks especiais existentes do dia do Firebase
+      const existingItems = await checklistService.getSpecialChecks(dateKey);
+      
+      // Adicionar novo item
+      const updatedItems = [...existingItems, newItem];
+      
+      // Salvar no Firebase
+      await checklistService.saveSpecialChecks(dateKey, updatedItems);
+      
+      onAdd(newItem);
+      onClose();
+    } catch (e) {
+      console.error("Erro ao salvar check especial:", e);
     }
-
-    // Adicionar novo item
-    existingItems.push(newItem);
-    localStorage.setItem(
-      `special_checks_${dateKey}`,
-      JSON.stringify(existingItems)
-    );
-
-    onAdd(newItem);
-    onClose();
   };
 
   return (

@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { MealSlot, SelectedMeal, getMealsForDay, Recipe, QuickFood, MealOption } from "@/types/meals";
 import { MealModal } from "./MealModal";
 import { RecipeLibrary } from "./RecipeLibrary";
+import { mealService } from "@/lib/firebaseService";
 
 interface MealChecklistProps {
   selectedDate: Date;
@@ -16,32 +17,48 @@ export function MealChecklist({ selectedDate }: MealChecklistProps) {
   const [librarySlotId, setLibrarySlotId] = useState<string | null>(null);
   const [showSlotSelector, setShowSlotSelector] = useState(false);
   const [pendingSelection, setPendingSelection] = useState<{ type: "recipe" | "quickfood"; item: Recipe | QuickFood } | null>(null);
+  const [customOptionsMap, setCustomOptionsMap] = useState<Map<string, MealOption[]>>(new Map());
   
   const dayOfWeek = selectedDate.getDay();
   const meals = getMealsForDay(dayOfWeek);
   const dateKey = selectedDate.toISOString().split("T")[0];
 
-  // Carregar refeições selecionadas do localStorage (depois virá do Firebase)
+  // Carregar refeições selecionadas do Firebase
   useEffect(() => {
-    const saved = localStorage.getItem(`meals_${dateKey}`);
-    if (saved) {
+    const loadMeals = async () => {
       try {
-        const parsed = JSON.parse(saved);
-        setSelectedMeals(parsed);
+        const meals = await mealService.getMeals(dateKey);
+        setSelectedMeals(meals);
       } catch (e) {
         console.error("Erro ao carregar refeições:", e);
         setSelectedMeals([]);
       }
-    } else {
-      setSelectedMeals([]);
-    }
+    };
+    loadMeals();
   }, [dateKey]);
+
+  // Carregar opções customizadas de todos os slots
+  useEffect(() => {
+    const loadCustomOptions = async () => {
+      const optionsMap = new Map<string, MealOption[]>();
+      for (const slot of meals) {
+        try {
+          const options = await mealService.getCustomOptions(slot.id);
+          optionsMap.set(slot.id, options);
+        } catch (e) {
+          console.error(`Erro ao carregar opções customizadas para ${slot.id}:`, e);
+        }
+      }
+      setCustomOptionsMap(optionsMap);
+    };
+    loadCustomOptions();
+  }, [meals]);
 
   const getSelectedMeals = (slotId: string): SelectedMeal[] => {
     return selectedMeals.filter((m) => m.slotId === slotId && m.date === dateKey);
   };
 
-  const handleMealSelect = (slotId: string, optionId: string) => {
+  const handleMealSelect = async (slotId: string, optionId: string) => {
     // Verificar se já existe essa combinação (evitar duplicatas)
     const alreadyExists = selectedMeals.some(
       (m) => m.slotId === slotId && m.optionId === optionId && m.date === dateKey
@@ -63,7 +80,13 @@ export function MealChecklist({ selectedDate }: MealChecklistProps) {
     const updated = [...selectedMeals, newSelectedMeal];
 
     setSelectedMeals(updated);
-    localStorage.setItem(`meals_${dateKey}`, JSON.stringify(updated));
+    
+    try {
+      // Salvar no Firebase
+      await mealService.saveMeals(dateKey, updated);
+    } catch (e) {
+      console.error("Erro ao salvar refeições:", e);
+    }
     
     // Disparar evento customizado para atualizar a página principal
     console.log("Disparando evento mealsUpdated para", dateKey, "com", updated.length, "refeições");
@@ -72,35 +95,38 @@ export function MealChecklist({ selectedDate }: MealChecklistProps) {
     setOpenModalSlot(null);
   };
 
-  const handleRemoveMeal = (slotId: string, optionId: string) => {
+  const handleRemoveMeal = async (slotId: string, optionId: string) => {
     // Remover apenas a refeição específica (por slotId + optionId)
     const updated = selectedMeals.filter(
       (m) => !(m.slotId === slotId && m.optionId === optionId && m.date === dateKey)
     );
     setSelectedMeals(updated);
-    localStorage.setItem(`meals_${dateKey}`, JSON.stringify(updated));
+    
+    try {
+      // Salvar no Firebase
+      await mealService.saveMeals(dateKey, updated);
+    } catch (e) {
+      console.error("Erro ao salvar refeições:", e);
+    }
     
     // Disparar evento customizado para atualizar a página principal
     console.log("Disparando evento mealsUpdated (remove) para", dateKey, "com", updated.length, "refeições");
     window.dispatchEvent(new CustomEvent("mealsUpdated", { detail: { dateKey, meals: updated } }));
   };
 
-  // Carregar opções customizadas dos slots
-  const getCustomOptions = (slotId: string): MealOption[] => {
-    const saved = localStorage.getItem(`custom_options_${slotId}`);
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        return [];
-      }
+  // Carregar opções customizadas dos slots do Firebase
+  const getCustomOptions = async (slotId: string): Promise<MealOption[]> => {
+    try {
+      return await mealService.getCustomOptions(slotId);
+    } catch (e) {
+      console.error("Erro ao carregar opções customizadas:", e);
+      return [];
     }
-    return [];
   };
 
   // Obter todas as opções de um slot (incluindo customizadas)
   const getAllSlotOptions = (slot: MealSlot): MealOption[] => {
-    const customOptions = getCustomOptions(slot.id);
+    const customOptions = customOptionsMap.get(slot.id) || [];
     return [...slot.options, ...customOptions];
   };
 
@@ -110,7 +136,7 @@ export function MealChecklist({ selectedDate }: MealChecklistProps) {
   };
 
   // Processar seleção pendente quando slot for escolhido
-  const processPendingSelection = (slotId: string) => {
+  const processPendingSelection = async (slotId: string) => {
     if (!pendingSelection) return;
 
     const slot = meals.find((s) => s.id === slotId);
@@ -150,21 +176,24 @@ export function MealChecklist({ selectedDate }: MealChecklistProps) {
       };
     }
 
-    // Salvar opção customizada no localStorage
-    const customOptions = getCustomOptions(slotId);
-    const updatedCustomOptions = [...customOptions, mealOption];
-    localStorage.setItem(
-      `custom_options_${slotId}`,
-      JSON.stringify(updatedCustomOptions)
-    );
+    // Salvar opção customizada no Firebase
+    try {
+      const customOptions = customOptionsMap.get(slotId) || [];
+      const updatedCustomOptions = [...customOptions, mealOption];
+      await mealService.saveCustomOptions(slotId, updatedCustomOptions);
+      // Atualizar estado local
+      setCustomOptionsMap(prev => new Map(prev).set(slotId, updatedCustomOptions));
+    } catch (e) {
+      console.error("Erro ao salvar opção customizada:", e);
+    }
 
     // Selecionar a nova opção
-    handleMealSelect(slotId, mealOption.id);
+    await handleMealSelect(slotId, mealOption.id);
     setPendingSelection(null);
   };
 
   // Converter receita da biblioteca em MealOption e adicionar ao slot
-  const handleRecipeSelect = (recipe: Recipe) => {
+  const handleRecipeSelect = async (recipe: Recipe) => {
     // Se não tiver slot selecionado, pedir para escolher primeiro
     if (!librarySlotId) {
       setShowLibrary(false);
@@ -188,22 +217,25 @@ export function MealChecklist({ selectedDate }: MealChecklistProps) {
       image: recipe.image,
     };
 
-    // Salvar opção customizada no localStorage
-    const customOptions = getCustomOptions(librarySlotId);
-    const updatedCustomOptions = [...customOptions, mealOption];
-    localStorage.setItem(
-      `custom_options_${librarySlotId}`,
-      JSON.stringify(updatedCustomOptions)
-    );
+    // Salvar opção customizada no Firebase
+    try {
+      const customOptions = customOptionsMap.get(librarySlotId) || [];
+      const updatedCustomOptions = [...customOptions, mealOption];
+      await mealService.saveCustomOptions(librarySlotId, updatedCustomOptions);
+      // Atualizar estado local
+      setCustomOptionsMap(prev => new Map(prev).set(librarySlotId, updatedCustomOptions));
+    } catch (e) {
+      console.error("Erro ao salvar opção customizada:", e);
+    }
 
     // Selecionar a nova opção
-    handleMealSelect(librarySlotId, mealOption.id);
+    await handleMealSelect(librarySlotId, mealOption.id);
     setShowLibrary(false);
     setLibrarySlotId(null);
   };
 
   // Converter comida pronta da biblioteca em MealOption e adicionar ao slot
-  const handleQuickFoodSelect = (quickFood: QuickFood) => {
+  const handleQuickFoodSelect = async (quickFood: QuickFood) => {
     // Se não tiver slot selecionado, pedir para escolher primeiro
     if (!librarySlotId) {
       setShowLibrary(false);
@@ -233,16 +265,19 @@ export function MealChecklist({ selectedDate }: MealChecklistProps) {
       image: quickFood.image,
     };
 
-    // Salvar opção customizada no localStorage
-    const customOptions = getCustomOptions(librarySlotId);
-    const updatedCustomOptions = [...customOptions, mealOption];
-    localStorage.setItem(
-      `custom_options_${librarySlotId}`,
-      JSON.stringify(updatedCustomOptions)
-    );
+    // Salvar opção customizada no Firebase
+    try {
+      const customOptions = customOptionsMap.get(librarySlotId) || [];
+      const updatedCustomOptions = [...customOptions, mealOption];
+      await mealService.saveCustomOptions(librarySlotId, updatedCustomOptions);
+      // Atualizar estado local
+      setCustomOptionsMap(prev => new Map(prev).set(librarySlotId, updatedCustomOptions));
+    } catch (e) {
+      console.error("Erro ao salvar opção customizada:", e);
+    }
 
     // Selecionar a nova opção
-    handleMealSelect(librarySlotId, mealOption.id);
+    await handleMealSelect(librarySlotId, mealOption.id);
     setShowLibrary(false);
     setLibrarySlotId(null);
   };
@@ -397,7 +432,7 @@ export function MealChecklist({ selectedDate }: MealChecklistProps) {
         // Criar slot com opções customizadas incluídas
         const slotWithCustomOptions: MealSlot = {
           ...slot,
-          options: getAllSlotOptions(slot),
+          options: getAllSlotOptions(slot), // Já é síncrono agora
         };
         
         return (
@@ -449,7 +484,7 @@ export function MealChecklist({ selectedDate }: MealChecklistProps) {
                   onClick={() => {
                     // Se houver seleção pendente, processá-la
                     if (pendingSelection) {
-                      processPendingSelection(slot.id);
+                      processPendingSelection(slot.id).catch(e => console.error("Erro ao processar seleção:", e));
                     } else {
                       // Caso normal: abrir Arsenal com slot selecionado
                       setLibrarySlotId(slot.id);

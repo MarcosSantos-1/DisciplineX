@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { DailyChecklist } from "@/components/DailyChecklist";
 import { AddSpecialCheckModal } from "@/components/AddSpecialCheckModal";
+import { checklistService } from "@/lib/firebaseService";
 
 function getDaysInMonth(year: number, month: number): Date[] {
   const firstDay = new Date(year, month, 1);
@@ -16,39 +17,31 @@ function getDaysInMonth(year: number, month: number): Date[] {
   return days;
 }
 
-function getDayScore(date: Date): number | null {
+async function getDayScore(date: Date): Promise<number | null> {
   // Verificar se estamos no navegador
   if (typeof window === "undefined") return null;
   
-  // Carregar score do checklist do dia
+  // Carregar score do checklist do dia do Firebase
   const dateKey = date.toISOString().split("T")[0];
-  const saved = localStorage.getItem(`daily_checklist_${dateKey}`);
-  if (saved) {
-    try {
-      const parsed = JSON.parse(saved);
-      return parsed.score || null;
-    } catch (e) {
-      console.error("Erro ao carregar score:", e);
-    }
+  try {
+    return await checklistService.getDailyChecklistScore(dateKey);
+  } catch (e) {
+    console.error("Erro ao carregar score:", e);
+    return null;
   }
-  return null;
 }
 
-function hasSpecialCheck(date: Date): boolean {
+async function hasSpecialCheck(date: Date): Promise<boolean> {
   // Verificar se estamos no navegador
   if (typeof window === "undefined") return false;
   
   const dateKey = date.toISOString().split("T")[0];
   try {
-    const saved = localStorage.getItem(`special_checks_${dateKey}`);
-    if (saved) {
-      const checks = JSON.parse(saved);
-      return checks && checks.length > 0;
-    }
+    const checks = await checklistService.getSpecialChecks(dateKey);
+    return checks && checks.length > 0;
   } catch (e) {
     return false;
   }
-  return false;
 }
 
 export default function CalendarioPage() {
@@ -57,10 +50,26 @@ export default function CalendarioPage() {
   const [selectedDate, setSelectedDate] = useState<Date>(today);
   const [showSpecialCheckModal, setShowSpecialCheckModal] = useState(false);
   const [specialCheckDate, setSpecialCheckDate] = useState<Date>(today);
+  const [daysWithScores, setDaysWithScores] = useState<Array<{ date: Date; score: number | null; hasSpecial: boolean }>>([]);
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
   const days = getDaysInMonth(year, month);
+
+  // Carregar scores e checks especiais
+  useEffect(() => {
+    const loadDaysData = async () => {
+      const daysData = await Promise.all(
+        days.map(async (date) => ({
+          date,
+          score: await getDayScore(date),
+          hasSpecial: await hasSpecialCheck(date),
+        }))
+      );
+      setDaysWithScores(daysData);
+    };
+    loadDaysData();
+  }, [currentDate]);
 
   const monthNames = [
     "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
@@ -147,11 +156,12 @@ export default function CalendarioPage() {
             }
             return emptyCells;
           })()}
-          {days.map((date) => {
-            const score = getDayScore(date);
+          {daysWithScores.map((dayData) => {
+            const date = dayData.date;
+            const score = dayData.score;
             const today = isToday(date);
             const dayOfWeek = date.getDay();
-            const specialCheck = hasSpecialCheck(date);
+            const specialCheck = dayData.hasSpecial;
             const hasScore = score !== null && score !== undefined;
             const isCompleted = hasScore && score! >= 80;
             const isIncomplete = hasScore && score! < 80;

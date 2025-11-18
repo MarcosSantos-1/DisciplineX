@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import type { ChecklistItem, DailyChecklist } from "@/types/meals";
+import { checklistService, workoutService } from "@/lib/firebaseService";
 
 interface DailyChecklistProps {
   date: Date;
@@ -122,14 +123,10 @@ export function DailyChecklist({ date, onScoreChange, onAddSpecialCheck }: Daily
   const [items, setItems] = useState<ChecklistItem[]>([]);
 
   // Função para verificar se todos os treinos do dia foram completados
-  const checkWorkoutCompleted = useCallback((dateKey: string): boolean => {
-    // Verificar se há treinos salvos para este dia
-    const saved = localStorage.getItem(`workout_${dateKey}`);
-    if (!saved) return false;
-    
+  const checkWorkoutCompleted = useCallback(async (dateKey: string): Promise<boolean> => {
     try {
-      const workout = JSON.parse(saved);
-      if (!workout.exercises || workout.exercises.length === 0) return false;
+      const workout = await workoutService.getWorkout(dateKey);
+      if (!workout || !workout.exercises || workout.exercises.length === 0) return false;
       
       // Verificar se todos os exercícios foram completados
       return workout.exercises.every((ex: any) => ex.completed === true);
@@ -140,96 +137,93 @@ export function DailyChecklist({ date, onScoreChange, onAddSpecialCheck }: Daily
 
   // Carregar checklist padrão e checks especiais do dia
   useEffect(() => {
-    // Carregar checklist padrão
-    const defaultChecklist = localStorage.getItem("default_checklist");
-    let defaultItems: ChecklistItem[] = [];
-    if (defaultChecklist) {
+    const loadChecklist = async () => {
+      // Carregar checklist padrão do Firebase
+      let defaultItems: ChecklistItem[] = [];
       try {
-        defaultItems = JSON.parse(defaultChecklist);
+        defaultItems = await checklistService.getDefaultChecklist();
       } catch (e) {
         console.error("Erro ao carregar checklist padrão:", e);
       }
-    }
 
-    // Se não tiver padrão salvo, usar os padrões iniciais
-    if (defaultItems.length === 0) {
-      defaultItems = [
-        {
-          id: "sleep-8h",
-          label: "8h de sono",
-          isSpecial: false,
-          weight: 26.67,
-        },
-        {
-          id: "workout-completed",
-          label: "Treino concluído",
-          isSpecial: false,
-          weight: 26.67,
-        },
-        {
-          id: "no-processed",
-          label: "Sem doces/processados",
-          isSpecial: false,
-          weight: 26.67,
-        },
-        {
-          id: "water-3l",
-          label: "+3L de água",
-          isSpecial: false,
-          weight: 20,
-        },
-      ];
-    }
+      // Se não tiver padrão salvo, usar os padrões iniciais
+      if (defaultItems.length === 0) {
+        defaultItems = [
+          {
+            id: "sleep-8h",
+            label: "8h de sono",
+            isSpecial: false,
+            weight: 26.67,
+          },
+          {
+            id: "workout-completed",
+            label: "Treino concluído",
+            isSpecial: false,
+            weight: 26.67,
+          },
+          {
+            id: "no-processed",
+            label: "Sem doces/processados",
+            isSpecial: false,
+            weight: 26.67,
+          },
+          {
+            id: "water-3l",
+            label: "+3L de água",
+            isSpecial: false,
+            weight: 20,
+          },
+        ];
+      }
 
-    // Verificar se é fim de semana
-    const dayOfWeek = date.getDay();
-    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6; // 0 = domingo, 6 = sábado
+      // Verificar se é fim de semana
+      const dayOfWeek = date.getDay();
+      const isWeekend = dayOfWeek === 0 || dayOfWeek === 6; // 0 = domingo, 6 = sábado
 
-    // Carregar checks especiais do dia
-    const specialChecklist = localStorage.getItem(`special_checks_${dateKey}`);
-    let specialItems: ChecklistItem[] = [];
-    if (specialChecklist) {
+      // Carregar checks especiais do dia do Firebase
+      let specialItems: ChecklistItem[] = [];
       try {
-        specialItems = JSON.parse(specialChecklist);
+        specialItems = await checklistService.getSpecialChecks(dateKey);
       } catch (e) {
         console.error("Erro ao carregar checks especiais:", e);
       }
-    }
 
-    // Distribuir pesos automaticamente (considerando fim de semana)
-    const allItems = distributeWeights(defaultItems, specialItems, isWeekend);
-    setItems(allItems);
+      // Distribuir pesos automaticamente (considerando fim de semana)
+      const allItems = distributeWeights(defaultItems, specialItems, isWeekend);
+      setItems(allItems);
 
-    // Carregar estado salvo do dia
-    const savedState = localStorage.getItem(`checklist_state_${dateKey}`);
-    let initialCheckedIds = new Set<string>();
-    if (savedState) {
+      // Carregar estado salvo do dia do Firebase
+      let initialCheckedIds = new Set<string>();
       try {
-        const parsed = JSON.parse(savedState);
-        initialCheckedIds = new Set(parsed.checkedIds || []);
+        const savedState = await checklistService.getChecklistState(dateKey);
+        if (savedState) {
+          initialCheckedIds = savedState;
+        }
       } catch (e) {
         console.error("Erro ao carregar estado do checklist:", e);
       }
-    }
 
-    // Verificar se treino foi completado automaticamente (apenas em dias de semana)
-    if (!isWeekend) {
-      const workoutCompleted = checkWorkoutCompleted(dateKey);
-      if (workoutCompleted) {
-        const workoutItem = allItems.find(item => item.id === "workout-completed");
-        if (workoutItem) {
-          initialCheckedIds.add("workout-completed");
+      // Verificar se treino foi completado automaticamente (apenas em dias de semana)
+      if (!isWeekend) {
+        const workoutCompleted = await checkWorkoutCompleted(dateKey);
+        if (workoutCompleted) {
+          const workoutItem = allItems.find(item => item.id === "workout-completed");
+          if (workoutItem) {
+            initialCheckedIds.add("workout-completed");
+          }
+        } else {
+          initialCheckedIds.delete("workout-completed");
         }
       } else {
+        // Nos fins de semana, remover "workout-completed" do checkedIds
         initialCheckedIds.delete("workout-completed");
       }
-    } else {
-      // Nos fins de semana, remover "workout-completed" do checkedIds
-      initialCheckedIds.delete("workout-completed");
-    }
 
-    setCheckedIds(initialCheckedIds);
-  }, [dateKey, date]);
+      setCheckedIds(initialCheckedIds);
+    };
+
+    loadChecklist();
+  }, [dateKey, date, checkWorkoutCompleted]);
 
   // Escutar eventos de atualização (sem causar loop)
   useEffect(() => {
@@ -239,39 +233,36 @@ export function DailyChecklist({ date, onScoreChange, onAddSpecialCheck }: Daily
     // Só escutar eventos de treino em dias de semana
     if (isWeekend) return;
     
-    const handleWorkoutUpdate = (e: CustomEvent) => {
+    const handleWorkoutUpdate = (e: Event) => {
+      const customEvent = e as CustomEvent;
       // Só atualizar se for para este dia
-      if (e.detail?.dateKey === dateKey) {
+      if (customEvent.detail?.dateKey === dateKey) {
         // Verificar treino quando atualizar
-        const saved = localStorage.getItem(`workout_${dateKey}`);
-        let workoutCompleted = false;
-        if (saved) {
-          try {
-            const workout = JSON.parse(saved);
-            if (workout.exercises && workout.exercises.length > 0) {
-              workoutCompleted = workout.exercises.every((ex: any) => ex.completed === true);
+        workoutService.getWorkout(dateKey).then((workout) => {
+          let workoutCompleted = false;
+          if (workout && workout.exercises && workout.exercises.length > 0) {
+            workoutCompleted = workout.exercises.every((ex: any) => ex.completed === true);
+          }
+          
+          setCheckedIds(prev => {
+            const newSet = new Set(prev);
+            if (workoutCompleted) {
+              newSet.add("workout-completed");
+            } else {
+              newSet.delete("workout-completed");
             }
-          } catch (e) {
-            // Ignorar erro
-          }
-        }
-        
-        setCheckedIds(prev => {
-          const newSet = new Set(prev);
-          if (workoutCompleted) {
-            newSet.add("workout-completed");
-          } else {
-            newSet.delete("workout-completed");
-          }
-          return newSet;
+            return newSet;
+          });
+        }).catch(() => {
+          // Ignorar erro
         });
       }
     };
     
-    window.addEventListener("workoutUpdated", handleWorkoutUpdate as EventListener);
+    window.addEventListener("workoutUpdated", handleWorkoutUpdate);
     
     return () => {
-      window.removeEventListener("workoutUpdated", handleWorkoutUpdate as EventListener);
+      window.removeEventListener("workoutUpdated", handleWorkoutUpdate);
     };
   }, [dateKey, date]);
 
@@ -279,32 +270,29 @@ export function DailyChecklist({ date, onScoreChange, onAddSpecialCheck }: Daily
   useEffect(() => {
     if (items.length === 0) return; // Não calcular se não tiver items ainda
     
-    const dayOfWeek = date.getDay();
-    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-    const score = calculateScore(items, checkedIds, isWeekend);
-    
-    // Salvar estado
-    localStorage.setItem(
-      `checklist_state_${dateKey}`,
-      JSON.stringify({ checkedIds: Array.from(checkedIds) })
-    );
+    const saveChecklist = async () => {
+      const dayOfWeek = date.getDay();
+      const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+      const score = calculateScore(items, checkedIds, isWeekend);
+      
+      try {
+        // Salvar estado no Firebase
+        await checklistService.saveChecklistState(dateKey, checkedIds);
 
-    // Salvar score do dia
-    const dailyChecklist: DailyChecklist = {
-      date: dateKey,
-      items: items,
-      score: score,
+        // Salvar checklist completo com score no Firebase
+        await checklistService.saveDailyChecklist(dateKey, items, score);
+      } catch (e) {
+        console.error("Erro ao salvar checklist:", e);
+      }
+
+      // Notificar mudança de score (sem causar loop)
+      if (onScoreChange) {
+        onScoreChange(score);
+      }
     };
-    localStorage.setItem(
-      `daily_checklist_${dateKey}`,
-      JSON.stringify(dailyChecklist)
-    );
 
-    // Notificar mudança de score (sem causar loop)
-    if (onScoreChange) {
-      onScoreChange(score);
-    }
-  }, [checkedIds, items, dateKey, onScoreChange]);
+    saveChecklist();
+  }, [checkedIds, items, dateKey, date, onScoreChange]);
 
   const handleToggle = (itemId: string) => {
     setCheckedIds((prev) => {
@@ -437,10 +425,16 @@ export function DailyChecklist({ date, onScoreChange, onAddSpecialCheck }: Daily
               )}
             </label>
             <button
-              onClick={() => {
+              onClick={async () => {
                 // Remover missão especial
                 const updated = specialItems.filter(i => i.id !== item.id);
-                localStorage.setItem(`special_checks_${dateKey}`, JSON.stringify(updated));
+                
+                try {
+                  // Salvar no Firebase
+                  await checklistService.saveSpecialChecks(dateKey, updated);
+                } catch (e) {
+                  console.error("Erro ao salvar checks especiais:", e);
+                }
                 
                 // Remover do checkedIds se estiver marcado
                 setCheckedIds(prev => {
@@ -450,14 +444,11 @@ export function DailyChecklist({ date, onScoreChange, onAddSpecialCheck }: Daily
                 });
                 
                 // Recarregar items do checklist
-                const defaultChecklist = localStorage.getItem("default_checklist");
                 let defaultItems: ChecklistItem[] = [];
-                if (defaultChecklist) {
-                  try {
-                    defaultItems = JSON.parse(defaultChecklist);
-                  } catch (e) {
-                    console.error("Erro ao carregar checklist padrão:", e);
-                  }
+                try {
+                  defaultItems = await checklistService.getDefaultChecklist();
+                } catch (e) {
+                  console.error("Erro ao carregar checklist padrão:", e);
                 }
                 if (defaultItems.length === 0) {
                   defaultItems = [
