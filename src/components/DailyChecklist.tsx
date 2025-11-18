@@ -294,16 +294,33 @@ export function DailyChecklist({ date, onScoreChange, onAddSpecialCheck }: Daily
     saveChecklist();
   }, [checkedIds, items, dateKey, date, onScoreChange]);
 
-  const handleToggle = (itemId: string) => {
-    setCheckedIds((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(itemId)) {
-        newSet.delete(itemId);
-      } else {
-        newSet.add(itemId);
+  const handleToggle = async (itemId: string) => {
+    const newCheckedIds = new Set(checkedIds);
+    if (newCheckedIds.has(itemId)) {
+      newCheckedIds.delete(itemId);
+    } else {
+      newCheckedIds.add(itemId);
+    }
+    
+    setCheckedIds(newCheckedIds);
+    
+    // Salvar imediatamente no Firebase
+    try {
+      await checklistService.saveChecklistState(dateKey, newCheckedIds);
+      
+      // Recalcular e salvar score
+      const dayOfWeek = date.getDay();
+      const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+      const score = calculateScore(items, newCheckedIds, isWeekend);
+      await checklistService.saveDailyChecklist(dateKey, items, score);
+      
+      // Notificar mudança de score
+      if (onScoreChange) {
+        onScoreChange(score);
       }
-      return newSet;
-    });
+    } catch (e) {
+      console.error("Erro ao salvar checklist:", e);
+    }
   };
 
   const dayOfWeek = date.getDay();

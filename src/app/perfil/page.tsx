@@ -364,6 +364,19 @@ function PerfilPageContent() {
     consumed: number[];
     deficits: number[];
   }>({ expenditures: [], consumed: [], deficits: [] });
+  
+  // Estados para relatórios semanais e mensais
+  const [weeklyReportData, setWeeklyReportData] = useState<{
+    scores: number[];
+    workouts: { completed: number; total: number };
+    avgScore: number | null;
+  }>({ scores: [], workouts: { completed: 0, total: 0 }, avgScore: null });
+  
+  const [monthlyReportData, setMonthlyReportData] = useState<{
+    scores: number[];
+    workouts: { completed: number; total: number };
+    avgScore: number | null;
+  }>({ scores: [], workouts: { completed: 0, total: 0 }, avgScore: null });
 
   // Carregar histórico de antropometria
   useEffect(() => {
@@ -471,6 +484,133 @@ function PerfilPageContent() {
 
     calculateMetrics();
   }, [activeTab, currentWeight, anthropometry]);
+
+  // Calcular dados semanais e mensais quando a aba de relatórios estiver ativa
+  useEffect(() => {
+    if (activeTab !== "reports") return;
+    
+    const today = new Date();
+    const lastWeekStart = new Date(today);
+    lastWeekStart.setDate(today.getDate() - 7);
+    const lastMonthStart = new Date(today);
+    lastMonthStart.setMonth(today.getMonth() - 1);
+
+    const getDayScore = async (date: Date): Promise<number | null> => {
+      const dateKey = date.toISOString().split("T")[0];
+      try {
+        return await checklistService.getDailyChecklistScore(dateKey);
+      } catch (e) {
+        return null;
+      }
+    };
+
+    const isWorkoutCompleted = async (date: Date): Promise<boolean> => {
+      const dateKey = date.toISOString().split("T")[0];
+      try {
+        const workout = await workoutService.getWorkout(dateKey);
+        if (workout && workout.exercises && workout.exercises.length > 0) {
+          return workout.exercises.every((ex: any) => ex.completed === true);
+        }
+      } catch (e) {
+        return false;
+      }
+      return false;
+    };
+
+    // Calcular dados semanais
+    const calculateWeeklyData = async () => {
+      const weeklyScores: number[] = [];
+      const weeklyWorkouts: { completed: number; total: number } = { completed: 0, total: 0 };
+
+      const dates = Array.from({ length: 7 }, (_, i) => {
+        const date = new Date(lastWeekStart);
+        date.setDate(lastWeekStart.getDate() + i);
+        return date;
+      });
+
+      const results = await Promise.all(
+        dates.map(async (date) => {
+          const score = await getDayScore(date);
+          const dayOfWeek = date.getDay();
+          const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+          const workoutCompleted = !isWeekend ? await isWorkoutCompleted(date) : false;
+          
+          return { score, isWeekend, workoutCompleted };
+        })
+      );
+
+      results.forEach((result) => {
+        if (result.score !== null) {
+          weeklyScores.push(result.score);
+        }
+        if (!result.isWeekend) {
+          weeklyWorkouts.total++;
+          if (result.workoutCompleted) {
+            weeklyWorkouts.completed++;
+          }
+        }
+      });
+
+      const weeklyAvgScore = weeklyScores.length > 0
+        ? Math.round(weeklyScores.reduce((a, b) => a + b, 0) / weeklyScores.length)
+        : null;
+
+      setWeeklyReportData({
+        scores: weeklyScores,
+        workouts: weeklyWorkouts,
+        avgScore: weeklyAvgScore,
+      });
+    };
+
+    // Calcular dados mensais
+    const calculateMonthlyData = async () => {
+      const monthlyScores: number[] = [];
+      const monthlyWorkouts: { completed: number; total: number } = { completed: 0, total: 0 };
+
+      const daysInMonth = Math.floor((today.getTime() - lastMonthStart.getTime()) / (1000 * 60 * 60 * 24));
+      const dates = Array.from({ length: daysInMonth }, (_, i) => {
+        const date = new Date(lastMonthStart);
+        date.setDate(lastMonthStart.getDate() + i);
+        return date;
+      });
+
+      const results = await Promise.all(
+        dates.map(async (date) => {
+          const score = await getDayScore(date);
+          const dayOfWeek = date.getDay();
+          const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+          const workoutCompleted = !isWeekend ? await isWorkoutCompleted(date) : false;
+          
+          return { score, isWeekend, workoutCompleted };
+        })
+      );
+
+      results.forEach((result) => {
+        if (result.score !== null) {
+          monthlyScores.push(result.score);
+        }
+        if (!result.isWeekend) {
+          monthlyWorkouts.total++;
+          if (result.workoutCompleted) {
+            monthlyWorkouts.completed++;
+          }
+        }
+      });
+
+      const monthlyAvgScore = monthlyScores.length > 0
+        ? Math.round(monthlyScores.reduce((a, b) => a + b, 0) / monthlyScores.length)
+        : null;
+
+      setMonthlyReportData({
+        scores: monthlyScores,
+        workouts: monthlyWorkouts,
+        avgScore: monthlyAvgScore,
+      });
+    };
+
+    calculateWeeklyData();
+    calculateMonthlyData();
+  }, [activeTab]);
 
   const handleAnthropometrySave = async (data: AnthropometryData) => {
     setAnthropometry(data);
@@ -758,92 +898,11 @@ function PerfilPageContent() {
       )}
 
       {activeTab === "reports" && (() => {
-        // Calcular relatórios com dados reais
         const today = new Date();
         const lastWeekStart = new Date(today);
         lastWeekStart.setDate(today.getDate() - 7);
         const lastMonthStart = new Date(today);
         lastMonthStart.setMonth(today.getMonth() - 1);
-
-        // Função para obter score de um dia do Firebase
-        const getDayScore = async (date: Date): Promise<number | null> => {
-          const dateKey = date.toISOString().split("T")[0];
-          try {
-            return await checklistService.getDailyChecklistScore(dateKey);
-          } catch (e) {
-            return null;
-          }
-        };
-
-        // Função para verificar se treino foi completado do Firebase
-        const isWorkoutCompleted = async (date: Date): Promise<boolean> => {
-          const dateKey = date.toISOString().split("T")[0];
-          try {
-            const workout = await workoutService.getWorkout(dateKey);
-            if (workout && workout.exercises && workout.exercises.length > 0) {
-              return workout.exercises.every((ex: any) => ex.completed === true);
-            }
-          } catch (e) {
-            return false;
-          }
-          return false;
-        };
-
-        // Calcular dados da última semana (será calculado assincronamente)
-        const [weeklyReportData, setWeeklyReportData] = useState<{
-          scores: number[];
-          workouts: { completed: number; total: number };
-          avgScore: number | null;
-        }>({ scores: [], workouts: { completed: 0, total: 0 }, avgScore: null });
-
-        useEffect(() => {
-          const calculateWeeklyData = async () => {
-            const weeklyScores: number[] = [];
-            const weeklyWorkouts: { completed: number; total: number } = { completed: 0, total: 0 };
-
-            const dates = Array.from({ length: 7 }, (_, i) => {
-              const date = new Date(lastWeekStart);
-              date.setDate(lastWeekStart.getDate() + i);
-              return date;
-            });
-
-            // Calcular scores e treinos em paralelo
-            const results = await Promise.all(
-              dates.map(async (date) => {
-                const score = await getDayScore(date);
-                const dayOfWeek = date.getDay();
-                const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-                const workoutCompleted = !isWeekend ? await isWorkoutCompleted(date) : false;
-                
-                return { score, isWeekend, workoutCompleted };
-              })
-            );
-
-            results.forEach((result) => {
-              if (result.score !== null) {
-                weeklyScores.push(result.score);
-              }
-              if (!result.isWeekend) {
-                weeklyWorkouts.total++;
-                if (result.workoutCompleted) {
-                  weeklyWorkouts.completed++;
-                }
-              }
-            });
-
-            const weeklyAvgScore = weeklyScores.length > 0
-              ? Math.round(weeklyScores.reduce((a, b) => a + b, 0) / weeklyScores.length)
-              : null;
-
-            setWeeklyReportData({
-              scores: weeklyScores,
-              workouts: weeklyWorkouts,
-              avgScore: weeklyAvgScore,
-            });
-          };
-
-          calculateWeeklyData();
-        }, [lastWeekStart]);
 
         const weeklyScores = weeklyReportData.scores;
         const weeklyWorkouts = weeklyReportData.workouts;
@@ -863,63 +922,6 @@ function PerfilPageContent() {
           }
           return null;
         })();
-
-        // Calcular dados do último mês (será calculado assincronamente)
-        const [monthlyReportData, setMonthlyReportData] = useState<{
-          scores: number[];
-          workouts: { completed: number; total: number };
-          avgScore: number | null;
-        }>({ scores: [], workouts: { completed: 0, total: 0 }, avgScore: null });
-
-        useEffect(() => {
-          const calculateMonthlyData = async () => {
-            const monthlyScores: number[] = [];
-            const monthlyWorkouts: { completed: number; total: number } = { completed: 0, total: 0 };
-
-            const daysInMonth = Math.floor((today.getTime() - lastMonthStart.getTime()) / (1000 * 60 * 60 * 24));
-            const dates = Array.from({ length: daysInMonth }, (_, i) => {
-              const date = new Date(lastMonthStart);
-              date.setDate(lastMonthStart.getDate() + i);
-              return date;
-            });
-
-            // Calcular scores e treinos em paralelo
-            const results = await Promise.all(
-              dates.map(async (date) => {
-                const score = await getDayScore(date);
-                const dayOfWeek = date.getDay();
-                const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-                const workoutCompleted = !isWeekend ? await isWorkoutCompleted(date) : false;
-                
-                return { score, isWeekend, workoutCompleted };
-              })
-            );
-
-            results.forEach((result) => {
-              if (result.score !== null) {
-                monthlyScores.push(result.score);
-              }
-              if (!result.isWeekend) {
-                monthlyWorkouts.total++;
-                if (result.workoutCompleted) {
-                  monthlyWorkouts.completed++;
-                }
-              }
-            });
-
-            const monthlyAvgScore = monthlyScores.length > 0
-              ? Math.round(monthlyScores.reduce((a, b) => a + b, 0) / monthlyScores.length)
-              : null;
-
-            setMonthlyReportData({
-              scores: monthlyScores,
-              workouts: monthlyWorkouts,
-              avgScore: monthlyAvgScore,
-            });
-          };
-
-          calculateMonthlyData();
-        }, [lastMonthStart, today]);
 
         const monthlyScores = monthlyReportData.scores;
         const monthlyWorkouts = monthlyReportData.workouts;
