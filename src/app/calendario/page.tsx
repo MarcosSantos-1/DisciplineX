@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { DailyChecklist } from "@/components/DailyChecklist";
 import { AddSpecialCheckModal } from "@/components/AddSpecialCheckModal";
-import { checklistService } from "@/lib/firebaseService";
+import { checklistService, workoutService } from "@/lib/firebaseService";
+import type { WorkoutDay } from "@/lib/firebaseService";
 
 function getDaysInMonth(year: number, month: number): Date[] {
   const firstDay = new Date(year, month, 1);
@@ -47,10 +48,12 @@ async function hasSpecialCheck(date: Date): Promise<boolean> {
 export default function CalendarioPage() {
   const today = new Date();
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [selectedDate, setSelectedDate] = useState<Date>(today);
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [showSpecialCheckModal, setShowSpecialCheckModal] = useState(false);
   const [specialCheckDate, setSpecialCheckDate] = useState<Date>(today);
   const [daysWithScores, setDaysWithScores] = useState<Array<{ date: Date; score: number | null; hasSpecial: boolean }>>([]);
+  const [workout, setWorkout] = useState<WorkoutDay | null>(null);
+  const carouselRef = useRef<HTMLDivElement>(null);
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
@@ -70,6 +73,27 @@ export default function CalendarioPage() {
     };
     loadDaysData();
   }, [currentDate]);
+
+  // Carregar treino quando selecionar um dia
+  useEffect(() => {
+    if (!selectedDate) {
+      setWorkout(null);
+      return;
+    }
+
+    const loadWorkout = async () => {
+      const dateKey = selectedDate.toISOString().split("T")[0];
+      try {
+        const workoutData = await workoutService.getWorkout(dateKey);
+        setWorkout(workoutData);
+      } catch (e) {
+        console.error("Erro ao carregar treino:", e);
+        setWorkout(null);
+      }
+    };
+
+    loadWorkout();
+  }, [selectedDate]);
 
   const monthNames = [
     "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
@@ -206,19 +230,138 @@ export default function CalendarioPage() {
         </div>
       </section>
 
-      {/* Checklist do dia selecionado */}
-      <section className="grid flex-1 gap-3 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1.1fr)]">
-        <DailyChecklist 
-          date={selectedDate} 
-          onScoreChange={(score) => {
-            // Score atualizado automaticamente pelo componente
-          }}
-          onAddSpecialCheck={() => {
-            setShowSpecialCheckModal(true);
-            setSpecialCheckDate(selectedDate);
-          }}
-        />
-      </section>
+      {/* Conteúdo do dia selecionado */}
+      {selectedDate && (
+        <section className="flex flex-1 flex-col gap-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-medium text-zinc-100">
+              {selectedDate.toLocaleDateString("pt-BR", {
+                weekday: "long",
+                day: "numeric",
+                month: "long",
+              })}
+            </h3>
+            <button
+              onClick={() => setSelectedDate(null)}
+              className="rounded-full border border-zinc-700/80 bg-zinc-950/60 px-3 py-1 text-[11px] text-zinc-300 hover:border-jagger-400/60 hover:text-jagger-100 transition-colors"
+            >
+              Fechar
+            </button>
+          </div>
+
+          {/* Carrossel de cards (Missões do Dia e Treinos) */}
+          <div className="relative">
+            <div
+              ref={carouselRef}
+              className="flex gap-4 overflow-x-auto scrollbar-hide snap-x snap-mandatory pb-2"
+              style={{
+                scrollbarWidth: "none",
+                msOverflowStyle: "none",
+              }}
+            >
+              {/* Card de Missões do Dia */}
+              <div className="flex-shrink-0 w-full sm:w-[calc(100%-1rem)] md:w-1/2 snap-start">
+                <DailyChecklist 
+                  date={selectedDate} 
+                  onScoreChange={(score) => {
+                    // Score atualizado automaticamente pelo componente
+                  }}
+                  onAddSpecialCheck={() => {
+                    setShowSpecialCheckModal(true);
+                    setSpecialCheckDate(selectedDate);
+                  }}
+                />
+              </div>
+
+              {/* Card de Treinos do Dia */}
+              <div className="flex-shrink-0 w-full sm:w-[calc(100%-1rem)] md:w-1/2 snap-start">
+                <div className="glass-panel rounded-3xl p-4">
+                  <div className="mb-3">
+                    <h3 className="text-sm font-medium text-zinc-100">
+                      Treinos do Dia
+                    </h3>
+                    <p className="mt-0.5 text-xs text-zinc-400">
+                      Exercícios realizados
+                    </p>
+                  </div>
+
+                  {workout && workout.exercises && workout.exercises.length > 0 ? (
+                    (() => {
+                      const completedExercises = workout.exercises.filter((ex) => ex.completed);
+                      
+                      if (completedExercises.length === 0) {
+                        return (
+                          <div className="text-center py-6 text-sm text-zinc-400">
+                            Nenhum treino realizado neste dia
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="space-y-2">
+                          {completedExercises.map((exercise) => {
+                            const isCardio = exercise.type === "cardio" || 
+                              exercise.name.includes("🚶") || 
+                              exercise.name.includes("🏃") || 
+                              exercise.name.toLowerCase().includes("cardio");
+
+                            return (
+                              <div
+                                key={exercise.id}
+                                className="rounded-xl bg-emerald-500/10 border border-emerald-500/40 px-2.5 py-2"
+                              >
+                                <p className="text-[11px] font-medium text-emerald-300 leading-tight">
+                                  {exercise.name}
+                                </p>
+                                <div className="mt-1.5 flex flex-wrap gap-1 text-[10px] text-zinc-400">
+                                  {!isCardio && exercise.weight && (
+                                    <span className="rounded-md bg-zinc-900/60 px-1.5 py-0.5">
+                                      💪 {exercise.weight}kg
+                                    </span>
+                                  )}
+                                  {exercise.sets && (
+                                    <span className="rounded-md bg-zinc-900/60 px-1.5 py-0.5">
+                                      📊 {typeof exercise.sets === "string" 
+                                        ? exercise.sets 
+                                        : exercise.reps 
+                                          ? `${exercise.sets}x${exercise.reps}`
+                                          : exercise.sets.toString()}
+                                    </span>
+                                  )}
+                                  {isCardio && exercise.minutes && (
+                                    <span className="rounded-md bg-zinc-900/60 px-1.5 py-0.5">
+                                      ⏱️ {exercise.minutes}min
+                                    </span>
+                                  )}
+                                  {isCardio && exercise.averageSpeed && (
+                                    <span className="rounded-md bg-zinc-900/60 px-1.5 py-0.5">
+                                      🏃 {exercise.averageSpeed} km/h
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()
+                  ) : (
+                    <div className="text-center py-6 text-sm text-zinc-400">
+                      Nenhum treino realizado neste dia
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Indicadores de scroll */}
+            <div className="flex justify-center gap-2 mt-4">
+              <div className="h-1.5 w-1.5 rounded-full bg-zinc-700" />
+              <div className="h-1.5 w-1.5 rounded-full bg-zinc-700" />
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* Modal para adicionar check especial */}
       {showSpecialCheckModal && (

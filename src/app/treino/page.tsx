@@ -267,33 +267,96 @@ function VideoPlayer({ url }: { url: string }) {
   );
 }
 
+// Função para buscar record da semana para um exercício
+async function getWeeklyRecord(exerciseName: string, exerciseId: string): Promise<number | null> {
+  if (typeof window === "undefined") return null;
+  
+  try {
+    const today = new Date();
+    const currentDay = today.getDay();
+    const monday = new Date(today);
+    monday.setDate(today.getDate() - currentDay + 1);
+    monday.setHours(0, 0, 0, 0);
+    
+    let maxWeight = 0;
+    
+    // Buscar treinos dos últimos 7 dias
+    for (let i = 0; i < 7; i++) {
+      const date = new Date(monday);
+      date.setDate(monday.getDate() + i);
+      const dateKey = date.toISOString().split("T")[0];
+      
+      try {
+        const workout = await workoutService.getWorkout(dateKey);
+        if (workout && workout.exercises) {
+          const exercise = workout.exercises.find((ex: any) => 
+            ex.id === exerciseId || ex.name === exerciseName
+          );
+          if (exercise && exercise.weight && exercise.weight > maxWeight) {
+            maxWeight = exercise.weight;
+          }
+        }
+      } catch (e) {
+        // Ignorar erros
+      }
+    }
+    
+    return maxWeight > 0 ? maxWeight : null;
+  } catch (e) {
+    console.error("Erro ao buscar record:", e);
+    return null;
+  }
+}
+
 function ExerciseCard({
   exercise,
   onComplete,
+  onUpdate,
 }: {
   exercise: Exercise;
   onComplete: (id: string, weight?: number, minutes?: number, averageSpeed?: number) => void;
+  onUpdate?: (id: string, weight?: number, minutes?: number, averageSpeed?: number) => void;
 }) {
   const [isOpen, setIsOpen] = useState(false);
-  const [weight, setWeight] = useState<string>("");
+  const [weight, setWeight] = useState<string>(exercise.weight?.toString() || "");
   const [minutes, setMinutes] = useState<string>(exercise.minutes?.toString() || "");
   const [averageSpeed, setAverageSpeed] = useState<string>(exercise.averageSpeed?.toString() || "");
+  const [weeklyRecord, setWeeklyRecord] = useState<number | null>(null);
 
   const isCardio = exercise.type === "cardio" || exercise.name.includes("🚶") || exercise.name.includes("🏃") || exercise.name.toLowerCase().includes("cardio") || exercise.minutes !== undefined;
+
+  // Buscar record da semana quando o componente montar ou quando o exercício mudar
+  useEffect(() => {
+    if (!isCardio && exercise.id) {
+      getWeeklyRecord(exercise.name, exercise.id).then(setWeeklyRecord);
+    }
+  }, [exercise.id, exercise.name, isCardio]);
+
+  // Atualizar valores quando o exercício mudar
+  useEffect(() => {
+    setWeight(exercise.weight?.toString() || "");
+    setMinutes(exercise.minutes?.toString() || "");
+    setAverageSpeed(exercise.averageSpeed?.toString() || "");
+  }, [exercise.weight, exercise.minutes, exercise.averageSpeed]);
 
   const handleComplete = () => {
     if (isCardio) {
       if (minutes && !isNaN(Number(minutes))) {
-        onComplete(exercise.id, undefined, Number(minutes), averageSpeed ? Number(averageSpeed) : undefined);
+        if (exercise.completed && onUpdate) {
+          onUpdate(exercise.id, undefined, Number(minutes), averageSpeed ? Number(averageSpeed) : undefined);
+        } else {
+          onComplete(exercise.id, undefined, Number(minutes), averageSpeed ? Number(averageSpeed) : undefined);
+        }
         setIsOpen(false);
-        setMinutes("");
-        setAverageSpeed("");
       }
     } else {
       if (weight && !isNaN(Number(weight))) {
-        onComplete(exercise.id, Number(weight));
+        if (exercise.completed && onUpdate) {
+          onUpdate(exercise.id, Number(weight));
+        } else {
+          onComplete(exercise.id, Number(weight));
+        }
         setIsOpen(false);
-        setWeight("");
       }
     }
   };
@@ -371,7 +434,7 @@ function ExerciseCard({
         <span className="text-zinc-400">{isOpen ? "▲" : "▼"}</span>
       </button>
 
-      {isOpen && !exercise.completed && (
+      {isOpen && (
         <div className="border-t border-zinc-800/80 px-3 py-2.5 space-y-2.5 sm:px-4 sm:py-3 sm:space-y-3">
           {exercise.videoUrl && exercise.videoUrl.trim() !== "" && (
             <VideoPlayer url={exercise.videoUrl} />
@@ -414,9 +477,14 @@ function ExerciseCard({
                 type="number"
                 value={weight}
                 onChange={(e) => setWeight(e.target.value)}
-                placeholder="0"
+                placeholder={weeklyRecord ? `Record: ${weeklyRecord}kg` : "0"}
                 className="w-20 rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-2 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-jagger-400/60 focus:outline-none"
               />
+              {weeklyRecord && (
+                <span className="text-[10px] text-zinc-500">
+                  Record: {weeklyRecord}kg
+                </span>
+              )}
             </div>
           )}
 
@@ -425,7 +493,7 @@ function ExerciseCard({
             disabled={isCardio ? (!minutes || isNaN(Number(minutes))) : (!weight || isNaN(Number(weight)))}
             className="w-full rounded-xl bg-jagger-600 px-4 py-2.5 text-sm font-medium text-zinc-50 transition-colors hover:bg-jagger-500 disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            Finalizar exercício
+            {exercise.completed ? "Atualizar exercício" : "Finalizar exercício"}
           </button>
         </div>
       )}
@@ -836,6 +904,73 @@ export default function TreinoPage() {
     };
   })();
 
+  const handleUpdateExercise = async (exerciseId: string, weight?: number, minutes?: number, averageSpeed?: number) => {
+    let workoutToSave: WorkoutDay | null = null;
+    
+    setWorkouts((prev) => {
+      const newWorkouts = new Map(prev);
+      const workout = newWorkouts.get(selectedDate.toISOString());
+      if (workout) {
+        workout.exercises = workout.exercises.map((ex) =>
+          ex.id === exerciseId
+            ? { ...ex, weight, minutes, averageSpeed }
+            : ex
+        );
+        newWorkouts.set(selectedDate.toISOString(), workout);
+        workoutToSave = { ...workout };
+      }
+      return newWorkouts;
+    });
+
+    // Salvar treino no Firebase após atualizar o estado
+    if (workoutToSave) {
+      const workout: WorkoutDay = workoutToSave;
+      const dateKey = selectedDate.toISOString().split("T")[0];
+      try {
+        // Converter para o formato esperado pelo Firebase (sem Date object e sem undefined)
+        const exercisesFormatted = workout.exercises.map((ex) => {
+          const exercise: any = {
+            id: ex.id,
+            name: ex.name,
+            type: ex.type || "strength",
+            sets: typeof ex.sets === "number" ? ex.sets : (typeof ex.sets === "string" ? parseInt(ex.sets) || 0 : 0),
+            reps: ex.reps || "",
+            rest: ex.rest !== undefined ? ex.rest : (ex.type === "cardio" ? 30 : 60),
+            completed: ex.completed,
+          };
+          
+          // Adicionar campos opcionais apenas se existirem
+          if (ex.weight !== undefined) exercise.weight = ex.weight;
+          if (ex.minutes !== undefined) exercise.minutes = ex.minutes;
+          if (ex.averageSpeed !== undefined) exercise.averageSpeed = ex.averageSpeed;
+          if (ex.videoUrl) exercise.videoUrl = ex.videoUrl;
+          if (ex.intensity) exercise.intensity = ex.intensity;
+          if (ex.activityTemplateId) exercise.activityTemplateId = ex.activityTemplateId;
+          
+          return exercise;
+        });
+        
+        const workoutToSaveFormatted: any = {
+          dayOfWeek: workout.dayOfWeek,
+          dayLabel: workout.dayLabel,
+          muscleGroup: workout.muscleGroup,
+          exercises: exercisesFormatted,
+          isWeekend: workout.isWeekend,
+        };
+        
+        console.log("Atualizando treino do dia:", dateKey, workoutToSaveFormatted);
+        await workoutService.saveWorkout(dateKey, workoutToSaveFormatted);
+        console.log("Treino atualizado com sucesso!");
+        
+        // Disparar evento para atualizar checklist
+        window.dispatchEvent(new CustomEvent("workoutUpdated", { detail: { dateKey } }));
+      } catch (error) {
+        console.error("Erro ao atualizar treino:", error);
+        alert(`Erro ao atualizar treino: ${error instanceof Error ? error.message : "Erro desconhecido"}`);
+      }
+    }
+  };
+
   const handleCompleteExercise = async (exerciseId: string, weight?: number, minutes?: number, averageSpeed?: number) => {
     let workoutToSave: WorkoutDay | null = null;
     
@@ -1120,6 +1255,9 @@ export default function TreinoPage() {
                 exercise={exercise}
                 onComplete={(id, weight, minutes, averageSpeed) =>
                   handleCompleteExercise(id, weight, minutes, averageSpeed)
+                }
+                onUpdate={(id, weight, minutes, averageSpeed) =>
+                  handleUpdateExercise(id, weight, minutes, averageSpeed)
                 }
               />
             ))}

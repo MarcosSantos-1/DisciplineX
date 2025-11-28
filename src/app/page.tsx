@@ -378,11 +378,6 @@ export default function Home() {
         }}
       />
 
-      {/* Card de calorias com gráfico circular */}
-      <section>
-        <CircularChart calories={nutrition.calories} macros={nutrition.macros} />
-      </section>
-
       {/* Checklist disciplinar + nutrição */}
       <section className="grid flex-1 gap-3 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1.1fr)]">
         {/* Checklist */}
@@ -402,6 +397,11 @@ export default function Home() {
 
         {/* Nutrição / refeições */}
         <MealChecklist selectedDate={selectedDate} />
+      </section>
+
+      {/* Card de calorias com gráfico circular - Movido para o final */}
+      <section>
+        <CircularChart calories={nutrition.calories} macros={nutrition.macros} />
       </section>
 
       {/* Modal para adicionar check especial */}
