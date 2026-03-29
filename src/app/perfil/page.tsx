@@ -1,6 +1,15 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
+import {
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  useRef,
+  useId,
+  Suspense,
+} from "react";
+import { createPortal } from "react-dom";
 import { useSearchParams, useRouter } from "next/navigation";
 import { ChecklistConfig } from "@/components/ChecklistConfig";
 import { calculateBMR, UserProfile, PhysicalActivity } from "@/types/meals";
@@ -17,6 +26,415 @@ type ProgressPoint = {
   weight: number;
   label: string; // Data formatada para exibição
 };
+
+/** Domingo → sábado (primeira coluna do gráfico). */
+const WEEKDAY_LABELS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"] as const;
+
+function toLocalDateKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * Aceita variações do Firebase (mês/dia sem zero) e devolve sempre YYYY-MM-DD.
+ * Sem isso, localeCompare("2025-11-03", "2025-3-15") ordena errado (nov antes de mar).
+ */
+function canonicalDateKey(raw: string): string | null {
+  if (!raw || typeof raw !== "string") return null;
+  const s = raw.trim();
+  const m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);
+  if (m) {
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    const d = Number(m[3]);
+    if (y < 1970 || y > 2100 || mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+    const dt = new Date(y, mo - 1, d, 12, 0, 0, 0);
+    if (
+      dt.getFullYear() !== y ||
+      dt.getMonth() !== mo - 1 ||
+      dt.getDate() !== d
+    ) {
+      return null;
+    }
+    return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  }
+  const t = Date.parse(s);
+  if (Number.isNaN(t)) return null;
+  return toLocalDateKey(new Date(t));
+}
+
+/** Meio-dia local; só use com chave já canônica ou após canonicalDateKey. */
+function timestampFromDateKey(dateKey: string): number {
+  const parts = dateKey.split("-").map(Number);
+  if (parts.length !== 3 || parts.some((n) => Number.isNaN(n))) return 0;
+  const [y, mo, d] = parts;
+  return new Date(y, mo - 1, d, 12, 0, 0, 0).getTime();
+}
+
+function stripDate(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+/**
+ * Ciclo Março (1º de março, ano N) → último dia de Fevereiro (ano N+1).
+ * Em janeiro e fevereiro ainda vale o ciclo que começou no março anterior.
+ */
+function getMarCycleBounds(today: Date): { rangeStart: Date; rangeEnd: Date } {
+  const y = today.getFullYear();
+  const month = today.getMonth();
+  const cycleStartYear = month < 2 ? y - 1 : y;
+  const rangeStart = stripDate(new Date(cycleStartYear, 2, 1));
+  const rangeEnd = stripDate(new Date(cycleStartYear + 1, 2, 0));
+  return { rangeStart, rangeEnd };
+}
+
+/** Semanas (colunas), domingo no topo; fora do intervalo do ciclo = null. */
+function buildContributionGrid(today: Date): (Date | null)[][] {
+  const { rangeStart, rangeEnd } = getMarCycleBounds(today);
+
+  const gridStart = new Date(rangeStart);
+  gridStart.setDate(gridStart.getDate() - gridStart.getDay());
+
+  const gridEnd = new Date(rangeEnd);
+  gridEnd.setDate(gridEnd.getDate() + (6 - gridEnd.getDay()));
+
+  const days: (Date | null)[] = [];
+  for (
+    let d = new Date(gridStart);
+    d <= gridEnd;
+    d.setDate(d.getDate() + 1)
+  ) {
+    const cur = stripDate(d);
+    if (cur < rangeStart || cur > rangeEnd) {
+      days.push(null);
+    } else {
+      days.push(new Date(cur));
+    }
+  }
+
+  const weeks: (Date | null)[][] = [];
+  for (let i = 0; i < days.length; i += 7) {
+    weeks.push(days.slice(i, i + 7));
+  }
+  return weeks;
+}
+
+function formatContributionTooltipDay(date: Date): string {
+  return date.toLocaleDateString("pt-BR", {
+    day: "numeric",
+    month: "short",
+  });
+}
+
+function normalizeWeightEntry(e: WeightEntry): WeightEntry | null {
+  const w = Number(e.weight);
+  if (Number.isNaN(w)) return null;
+  const dateCanon = canonicalDateKey(String(e.date ?? ""));
+  if (!dateCanon) return null;
+  return {
+    ...e,
+    date: dateCanon,
+    weight: w,
+    timestamp: timestampFromDateKey(dateCanon),
+  };
+}
+
+function WeightEvolutionChart({ points }: { points: ProgressPoint[] }) {
+  const gradId = useId().replace(/:/g, "");
+
+  const { linePath, areaPath, circles, yMin, yMax } = useMemo(() => {
+    const weights = points.map((p) => p.weight);
+    const minW = Math.min(...weights);
+    const maxW = Math.max(...weights);
+    const span = maxW - minW;
+    const pad = span > 0 ? Math.max(span * 0.12, 0.5) : 2;
+    const yMinV = minW - pad;
+    const yMaxV = maxW + pad;
+    const yRange = yMaxV - yMinV || 1;
+    const n = points.length;
+    const top = 8;
+    const bottom = 92;
+    const usable = bottom - top;
+
+    const xy = points.map((p, i) => {
+      const x = n === 1 ? 50 : (i / (n - 1)) * 100;
+      const t = (p.weight - yMinV) / yRange;
+      const y = bottom - t * usable;
+      return { x, y: Math.max(top, Math.min(bottom, y)) };
+    });
+
+    const dLine = xy
+      .map((pt, i) => `${i === 0 ? "M" : "L"} ${pt.x} ${pt.y}`)
+      .join(" ");
+    const dArea = `M ${xy[0].x} ${bottom} ${xy
+      .map((pt) => `L ${pt.x} ${pt.y}`)
+      .join(" ")} L ${xy[xy.length - 1].x} ${bottom} Z`;
+
+    return {
+      linePath: dLine,
+      areaPath: dArea,
+      circles: xy,
+      yMin: yMinV,
+      yMax: yMaxV,
+    };
+  }, [points]);
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="relative h-44 w-full rounded-xl border border-zinc-800/80 bg-zinc-950/40 pl-8 pr-1 pt-2">
+        <svg
+          viewBox="0 0 100 100"
+          className="h-full w-full overflow-visible text-jagger-400"
+          preserveAspectRatio="none"
+          aria-hidden
+        >
+          <defs>
+            <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#0ea5e9" stopOpacity="0.35" />
+              <stop offset="100%" stopColor="#09090b" stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          {[0, 0.25, 0.5, 0.75, 1].map((t) => {
+            const y = 8 + (1 - t) * 84;
+            return (
+              <line
+                key={t}
+                x1="0"
+                x2="100"
+                y1={y}
+                y2={y}
+                className="stroke-zinc-800/60"
+                strokeWidth="0.22"
+                vectorEffect="non-scaling-stroke"
+              />
+            );
+          })}
+          <path d={areaPath} fill={`url(#${gradId})`} />
+          <path
+            d={linePath}
+            fill="none"
+            className="stroke-jagger-400"
+            strokeWidth="1.25"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            vectorEffect="non-scaling-stroke"
+          />
+          {circles.map((pt, i) => (
+            <circle
+              key={`${points[i].date}-${i}`}
+              cx={pt.x}
+              cy={pt.y}
+              r={points.length === 1 ? 2 : 1.4}
+              className="fill-zinc-100 stroke-jagger-500"
+              strokeWidth="0.35"
+              vectorEffect="non-scaling-stroke"
+            />
+          ))}
+        </svg>
+        <div className="pointer-events-none absolute left-2 top-2 flex h-[calc(100%-0.5rem)] w-6 flex-col justify-between text-[9px] tabular-nums text-zinc-500">
+          <span>{yMax.toFixed(1)}</span>
+          <span>{yMin.toFixed(1)}</span>
+        </div>
+      </div>
+      <div className="scrollbar-hide -mx-px overflow-x-auto pb-0.5">
+        <div className="flex w-max min-w-full flex-nowrap justify-start gap-3 px-0.5 text-center">
+          {points.map((point, idx) => (
+            <div
+              key={point.date}
+              className="w-[4.25rem] shrink-0 sm:w-[4.75rem]"
+            >
+              <p className="truncate text-[9px] text-zinc-500">{point.label}</p>
+              <p
+                className={`text-[11px] font-medium tabular-nums ${
+                  idx === points.length - 1 ? "text-jagger-300" : "text-zinc-300"
+                }`}
+              >
+                {point.weight.toFixed(1)} kg
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Rótulo do mês na coluna da semana em que cai o dia 1 (estilo GitHub). */
+function monthLabelForContributionWeek(week: (Date | null)[]): string | null {
+  for (const d of week) {
+    if (!d) continue;
+    if (d.getDate() === 1) {
+      const raw = d.toLocaleDateString("pt-BR", { month: "short" });
+      const cleaned = raw.replace(/\.$/, "").trim();
+      return (
+        cleaned.charAt(0).toLocaleUpperCase("pt-BR") + cleaned.slice(1)
+      );
+    }
+  }
+  return null;
+}
+
+function MetaContributionHeatmap({
+  weeks,
+  scores,
+}: {
+  weeks: (Date | null)[][];
+  scores: Record<string, number | null>;
+}) {
+  const [tip, setTip] = useState<{
+    text: string;
+    x: number;
+    y: number;
+    placement: "above" | "below";
+  } | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const clearTip = useCallback(() => setTip(null), []);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const clear = () => setTip(null);
+    window.addEventListener("scroll", clear, true);
+    el.addEventListener("scroll", clear);
+    return () => {
+      window.removeEventListener("scroll", clear, true);
+      el.removeEventListener("scroll", clear);
+    };
+  }, [weeks]);
+
+  const showTip = (
+    el: HTMLElement,
+    day: Date,
+    score: number | null | undefined
+  ) => {
+    const r = el.getBoundingClientRect();
+    const t = `${formatContributionTooltipDay(day)}${
+      score != null ? ` · ${score}%` : " · sem registro"
+    }`;
+    const spaceAbove = r.top;
+    const placement: "above" | "below" = spaceAbove > 40 ? "above" : "below";
+    setTip({
+      text: t,
+      x: r.left + r.width / 2,
+      y: placement === "above" ? r.top : r.bottom,
+      placement,
+    });
+  };
+
+  const tooltip =
+    tip &&
+    createPortal(
+      <div
+        className="pointer-events-none fixed z-[400] max-w-[min(90vw,16rem)] whitespace-normal rounded-md border border-zinc-600/90 bg-zinc-900/98 px-1.5 py-1.5 text-center text-[10px] leading-snug text-zinc-100 shadow-xl backdrop-blur-sm"
+        style={{
+          left: tip.x,
+          top: tip.placement === "above" ? tip.y - 6 : tip.y + 6,
+          transform:
+            tip.placement === "above"
+              ? "translate(-50%, -100%)"
+              : "translate(-50%, 0)",
+        }}
+        role="tooltip"
+      >
+        {tip.text}
+      </div>,
+      document.body
+    );
+
+  return (
+    <>
+      {tooltip}
+      <div className="w-full min-w-0">
+        <div
+          ref={scrollRef}
+          className="w-full max-w-full overflow-x-auto overflow-y-visible pb-1 scrollbar-hide touch-pan-x"
+        >
+          <div className="inline-flex w-max max-w-none items-stretch gap-1.5 sm:gap-2">
+            <div
+              className="flex shrink-0 flex-col gap-[3px] pl-0.5 sm:pl-1"
+              aria-hidden
+            >
+              <div className="h-4 shrink-0" />
+              {WEEKDAY_LABELS.map((label, i) => (
+                <div
+                  key={i}
+                  className="flex h-3 min-w-[2.25rem] shrink-0 items-center justify-start text-left text-[10px] font-medium leading-tight text-zinc-300 sm:h-3.5 sm:min-w-[2.5rem]"
+                >
+                  {label}
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-[3px]">
+              {weeks.map((week, wi) => {
+                const monthLabel = monthLabelForContributionWeek(week);
+                return (
+                  <div
+                    key={wi}
+                    className="flex flex-col items-center gap-1"
+                  >
+                    <div className="flex h-4 w-3 shrink-0 items-end justify-center sm:w-3.5">
+                      <span className="text-center text-[9px] leading-none text-zinc-500">
+                        {monthLabel ?? "\u00a0"}
+                      </span>
+                    </div>
+                    <div className="flex flex-col gap-[3px]">
+                      {week.map((day, di) => {
+                        if (!day) {
+                          return (
+                            <div
+                              key={`empty-${wi}-${di}`}
+                              className="aspect-square h-3 w-3 shrink-0 rounded-[3px] bg-transparent sm:h-3.5 sm:w-3.5"
+                              aria-hidden
+                            />
+                          );
+                        }
+                        const key = toLocalDateKey(day);
+                        const score = scores[key];
+                        const tipText = `${formatContributionTooltipDay(day)}${
+                          score != null ? ` · ${score}%` : " · sem registro"
+                        }`;
+
+                        let cellClass =
+                          "aspect-square h-3 w-3 shrink-0 rounded-[3px] border sm:h-3.5 sm:w-3.5 ";
+                        if (score === null || score === undefined) {
+                          cellClass += "bg-zinc-800/75 border-zinc-700/45";
+                        } else if (score <= 60) {
+                          cellClass += "bg-zinc-700/55 border-zinc-600/35";
+                        } else if (score <= 85) {
+                          cellClass += "bg-emerald-600/50 border-emerald-500/35";
+                        } else {
+                          cellClass += "bg-emerald-700 border-emerald-600/40";
+                        }
+
+                        return (
+                          <div
+                            key={key}
+                            tabIndex={0}
+                            className={`group relative outline-none focus-visible:ring-2 focus-visible:ring-jagger-400/40 focus-visible:ring-offset-1 focus-visible:ring-offset-zinc-950 ${cellClass}`}
+                            title={tipText}
+                            onMouseEnter={(e) =>
+                              showTip(e.currentTarget, day, score)
+                            }
+                            onMouseLeave={clearTip}
+                            onFocus={(e) => showTip(e.currentTarget, day, score)}
+                            onBlur={clearTip}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
 
 type AnthropometryData = {
   weight: number;
@@ -292,37 +710,43 @@ function PerfilPageContent() {
   // Carregar dados do Firebase
   useEffect(() => {
     const loadData = async () => {
+      let loadedWeight = 92;
       try {
-        const weight = await profileService.getCurrentWeight();
-        setCurrentWeight(weight);
+        loadedWeight = await profileService.getCurrentWeight();
+        setCurrentWeight(loadedWeight);
       } catch (e) {
         console.error("Erro ao carregar peso atual:", e);
       }
-      
+
       try {
         const target = await profileService.getTargetWeight();
         setTargetWeight(target);
       } catch (e) {
         console.error("Erro ao carregar meta de peso:", e);
       }
-      
+
       try {
         const history = await profileService.getWeightHistory();
-        if (history.length > 0) {
-          setWeightHistory(history);
+        const normalized = history
+          .map(normalizeWeightEntry)
+          .filter((e): e is WeightEntry => e !== null);
+        if (normalized.length > 0) {
+          normalized.sort((a, b) => a.date.localeCompare(b.date));
+          setWeightHistory(normalized);
         } else {
-          // Criar entrada inicial
-          const initialEntry: WeightEntry = {
-            date: new Date().toISOString().split("T")[0],
-            weight: currentWeight,
-            timestamp: Date.now(),
-          };
-          setWeightHistory([initialEntry]);
+          const todayKey = toLocalDateKey(new Date());
+          setWeightHistory([
+            {
+              date: todayKey,
+              weight: loadedWeight,
+              timestamp: timestampFromDateKey(todayKey),
+            },
+          ]);
         }
       } catch (e) {
         console.error("Erro ao carregar histórico de peso:", e);
       }
-      
+
       try {
         const anthro = await profileService.getAnthropometry();
         if (anthro) {
@@ -335,25 +759,30 @@ function PerfilPageContent() {
     loadData();
   }, []);
 
-  // Converter histórico de peso para pontos do gráfico
-  const progress: ProgressPoint[] = weightHistory
-    .sort((a, b) => a.timestamp - b.timestamp)
-    .map((entry) => {
-      const date = new Date(entry.date);
-      const dayOfWeek = date.getDay();
-      const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-      
-      // Formatar label: se for fim de semana, mostrar data completa, senão apenas dia/mês
-      const label = isWeekend || weightHistory.length <= 7
-        ? date.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })
-        : date.getDate().toString();
+  const progress: ProgressPoint[] = useMemo(() => {
+    const byDate = new Map<string, WeightEntry>();
+    for (const e of weightHistory) {
+      const n = normalizeWeightEntry(e);
+      if (!n) continue;
+      byDate.set(n.date, n);
+    }
+    const sorted = [...byDate.values()].sort((a, b) =>
+      a.date.localeCompare(b.date)
+    );
 
+    return sorted.map((entry) => {
+      const date = new Date(`${entry.date}T12:00:00`);
+      const label = date.toLocaleDateString("pt-BR", {
+        day: "2-digit",
+        month: "short",
+      });
       return {
         date: entry.date,
         weight: entry.weight,
         label,
       };
     });
+  }, [weightHistory]);
 
   const [isAnthropometryModalOpen, setIsAnthropometryModalOpen] = useState(false);
   const [isCurrentWeightModalOpen, setIsCurrentWeightModalOpen] = useState(false);
@@ -377,6 +806,70 @@ function PerfilPageContent() {
     workouts: { completed: number; total: number };
     avgScore: number | null;
   }>({ scores: [], workouts: { completed: 0, total: 0 }, avgScore: null });
+
+  const [contributionScores, setContributionScores] = useState<
+    Record<string, number | null>
+  >({});
+  const [contributionLoading, setContributionLoading] = useState(true);
+
+  const contributionWeeks = useMemo(
+    () => buildContributionGrid(new Date()),
+    []
+  );
+
+  // Carregar scores do checklist para o gráfico estilo GitHub (aba Visão Geral)
+  useEffect(() => {
+    if (activeTab !== "overview") return;
+
+    let cancelled = false;
+
+    const load = async () => {
+      setContributionLoading(true);
+      const keys = new Set<string>();
+      for (const week of contributionWeeks) {
+        for (const d of week) {
+          if (d) keys.add(toLocalDateKey(d));
+        }
+      }
+
+      const dateKeys = [...keys];
+      const chunkSize = 40;
+      const merged: Record<string, number | null> = {};
+
+      try {
+        for (let i = 0; i < dateKeys.length; i += chunkSize) {
+          const chunk = dateKeys.slice(i, i + chunkSize);
+          const results = await Promise.all(
+            chunk.map(async (dateKey) => {
+              try {
+                const score = await checklistService.getDailyChecklistScore(
+                  dateKey
+                );
+                return { dateKey, score };
+              } catch {
+                return { dateKey, score: null as number | null };
+              }
+            })
+          );
+          for (const { dateKey, score } of results) {
+            merged[dateKey] = score;
+          }
+        }
+        if (!cancelled) {
+          setContributionScores(merged);
+        }
+      } finally {
+        if (!cancelled) {
+          setContributionLoading(false);
+        }
+      }
+    };
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, contributionWeeks]);
 
   // Carregar histórico de antropometria
   useEffect(() => {
@@ -653,18 +1146,18 @@ function PerfilPageContent() {
 
   const addWeightEntry = async (weight: number, date?: Date) => {
     const entryDate = date || new Date();
-    const dateKey = entryDate.toISOString().split("T")[0];
-    
+    const dateKey = toLocalDateKey(entryDate);
+
     const newEntry: WeightEntry = {
       date: dateKey,
       weight,
-      timestamp: entryDate.getTime(),
+      timestamp: timestampFromDateKey(dateKey),
     };
 
     // Verificar se já existe entrada para esta data
     const updatedHistory = [...weightHistory];
     const existingIndex = updatedHistory.findIndex((e) => e.date === dateKey);
-    
+
     if (existingIndex >= 0) {
       // Atualizar entrada existente
       updatedHistory[existingIndex] = newEntry;
@@ -673,8 +1166,7 @@ function PerfilPageContent() {
       updatedHistory.push(newEntry);
     }
 
-    // Ordenar por timestamp
-    updatedHistory.sort((a, b) => a.timestamp - b.timestamp);
+    updatedHistory.sort((a, b) => a.date.localeCompare(b.date));
     
     setWeightHistory(updatedHistory);
     
@@ -710,7 +1202,7 @@ function PerfilPageContent() {
   const weightLost = initialWeight - currentWeight;
 
   return (
-    <div className="flex flex-1 flex-col gap-4">
+    <div className="flex min-w-0 flex-1 flex-col gap-4">
       <header className="flex flex-col gap-2">
         <div>
           <p className="text-xs uppercase tracking-[0.25em] text-jagger-300/80">
@@ -843,6 +1335,51 @@ function PerfilPageContent() {
             </div>
           </section>
 
+          {/* Histórico de meta diária (estilo GitHub) */}
+          <section className="glass-panel min-w-0 overflow-visible rounded-3xl p-3">
+            <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h3 className="text-sm font-medium text-zinc-100">
+                  Histórico de metas
+                </h3>
+
+              </div>
+              <div className="flex items-center gap-3 text-[10px] text-zinc-500 shrink-0">
+                <span>Menos</span>
+                <div className="flex gap-1">
+                  <span
+                    className="h-3 w-3 rounded-sm bg-zinc-800/80 border border-zinc-700/50"
+                    title="Sem registro"
+                  />
+                  <span
+                    className="h-3 w-3 rounded-sm bg-zinc-700/60 border border-zinc-600/40"
+                    title="≤ 60%"
+                  />
+                  <span
+                    className="h-3 w-3 rounded-sm bg-emerald-600/50 border border-emerald-500/35"
+                    title="61–85%"
+                  />
+                  <span
+                    className="h-3 w-3 rounded-sm bg-emerald-700 border border-emerald-600/45"
+                    title="86–100%"
+                  />
+                </div>
+                <span>Mais</span>
+              </div>
+            </div>
+
+            {contributionLoading ? (
+              <div className="flex h-28 items-center justify-center text-xs text-zinc-500">
+                Carregando histórico…
+              </div>
+            ) : (
+              <MetaContributionHeatmap
+                weeks={contributionWeeks}
+                scores={contributionScores}
+              />
+            )}
+          </section>
+
           {/* Progress Chart */}
           <section className="glass-panel rounded-3xl p-4">
             <div className="mb-4 flex items-center justify-between">
@@ -856,38 +1393,7 @@ function PerfilPageContent() {
               )}
             </div>
             {progress.length > 0 ? (
-              <div className="flex items-end justify-between gap-1 sm:gap-2 h-48">
-                {progress.map((point, idx) => {
-                  const maxWeight = Math.max(...progress.map((p) => p.weight));
-                  const minWeight = Math.min(...progress.map((p) => p.weight));
-                  const range = maxWeight - minWeight;
-                  const height = range > 0 ? ((point.weight - minWeight) / range) * 100 : 50;
-                  const isLatest = idx === progress.length - 1;
-
-                  return (
-                    <div key={`${point.date}-${idx}`} className="flex-1 flex flex-col items-center gap-1.5 min-w-0">
-                      <div className="w-full flex flex-col items-center justify-end h-32 relative group">
-                        <div
-                          className={`w-full rounded-t-lg bg-gradient-to-t transition-all ${
-                            isLatest 
-                              ? "from-jagger-500 to-jagger-400 ring-2 ring-jagger-400/50" 
-                              : "from-jagger-600/80 to-jagger-400/80"
-                          }`}
-                          style={{ height: `${Math.max(height, 5)}%` }}
-                        />
-                        {/* Tooltip com peso exato */}
-                        <div className="absolute bottom-full mb-2 hidden group-hover:block bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1 text-[10px] text-zinc-100 whitespace-nowrap z-10">
-                          {point.weight}kg
-                        </div>
-                      </div>
-                      <p className="text-[9px] text-zinc-400 text-center truncate w-full">{point.label}</p>
-                      <p className={`text-[10px] font-medium ${isLatest ? "text-jagger-300" : "text-zinc-300"}`}>
-                        {point.weight.toFixed(1)}kg
-                      </p>
-                    </div>
-                  );
-                })}
-              </div>
+              <WeightEvolutionChart points={progress} />
             ) : (
               <div className="flex items-center justify-center h-48 text-zinc-500 text-sm">
                 Clique em "Peso Atual" para adicionar sua primeira pesagem
