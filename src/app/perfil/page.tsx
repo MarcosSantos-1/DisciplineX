@@ -7,6 +7,7 @@ import {
   useCallback,
   useRef,
   useId,
+  useSyncExternalStore,
   Suspense,
 } from "react";
 import { createPortal } from "react-dom";
@@ -141,36 +142,80 @@ function normalizeWeightEntry(e: WeightEntry): WeightEntry | null {
   };
 }
 
-function WeightEvolutionChart({ points }: { points: ProgressPoint[] }) {
+/** Abaixo do breakpoint sm (639px): layout mobile do gráfico de peso */
+function useIsBelowSm(): boolean {
+  return useSyncExternalStore(
+    (onStoreChange) => {
+      const mq = window.matchMedia("(max-width: 639px)");
+      mq.addEventListener("change", onStoreChange);
+      return () => mq.removeEventListener("change", onStoreChange);
+    },
+    () => window.matchMedia("(max-width: 639px)").matches,
+    () => false
+  );
+}
+
+/**
+ * Primeiro, último e 2 índices intermediários uniformes (máx. 4 pontos).
+ * O último índice é sempre a pesagem mais recente.
+ */
+function selectFourPointsForMobileChart(points: ProgressPoint[]): ProgressPoint[] {
+  const L = points.length;
+  if (L <= 4) return points;
+  const idx = new Set<number>();
+  for (let k = 0; k < 4; k++) {
+    idx.add(Math.round((k * (L - 1)) / 3));
+  }
+  return [...idx].sort((a, b) => a - b).map((i) => points[i]);
+}
+
+function WeightEvolutionChart({
+  points,
+  yExtent,
+  compactLegend,
+}: {
+  points: ProgressPoint[];
+  /** Escala vertical usando série completa (evita achatar o recorte mobile) */
+  yExtent?: { min: number; max: number } | null;
+  /** Legenda em grelha fixa no card (mobile) */
+  compactLegend?: boolean;
+}) {
   const gradId = useId().replace(/:/g, "");
 
-  const { linePath, areaPath, circles, yMin, yMax } = useMemo(() => {
+  const { linePath, areaPath, circles, yMin, yMax, vbW, vbH } = useMemo(() => {
     const weights = points.map((p) => p.weight);
-    const minW = Math.min(...weights);
-    const maxW = Math.max(...weights);
+    const minW = yExtent ? yExtent.min : Math.min(...weights);
+    const maxW = yExtent ? yExtent.max : Math.max(...weights);
     const span = maxW - minW;
     const pad = span > 0 ? Math.max(span * 0.12, 0.5) : 2;
     const yMinV = minW - pad;
     const yMaxV = maxW + pad;
     const yRange = yMaxV - yMinV || 1;
     const n = points.length;
-    const top = 8;
-    const bottom = 92;
-    const usable = bottom - top;
+    /** viewBox 2:1 — mesma proporção do container (evita elipse com preserveAspectRatio none) */
+    const VB_W = 200;
+    const VB_H = 100;
+    const xPad = 10;
+    const yTop = 8;
+    const yBottom = 92;
+    const usableY = yBottom - yTop;
 
     const xy = points.map((p, i) => {
-      const x = n === 1 ? 50 : (i / (n - 1)) * 100;
+      const x =
+        n === 1
+          ? VB_W / 2
+          : xPad + (i / (n - 1)) * (VB_W - 2 * xPad);
       const t = (p.weight - yMinV) / yRange;
-      const y = bottom - t * usable;
-      return { x, y: Math.max(top, Math.min(bottom, y)) };
+      const y = yBottom - t * usableY;
+      return { x, y: Math.max(yTop, Math.min(yBottom, y)) };
     });
 
     const dLine = xy
       .map((pt, i) => `${i === 0 ? "M" : "L"} ${pt.x} ${pt.y}`)
       .join(" ");
-    const dArea = `M ${xy[0].x} ${bottom} ${xy
+    const dArea = `M ${xy[0].x} ${yBottom} ${xy
       .map((pt) => `L ${pt.x} ${pt.y}`)
-      .join(" ")} L ${xy[xy.length - 1].x} ${bottom} Z`;
+      .join(" ")} L ${xy[xy.length - 1].x} ${yBottom} Z`;
 
     return {
       linePath: dLine,
@@ -178,85 +223,120 @@ function WeightEvolutionChart({ points }: { points: ProgressPoint[] }) {
       circles: xy,
       yMin: yMinV,
       yMax: yMaxV,
+      vbW: VB_W,
+      vbH: VB_H,
     };
-  }, [points]);
+  }, [points, yExtent]);
+
+  const legendGridClass =
+    compactLegend && points.length > 0
+      ? points.length === 1
+        ? "grid grid-cols-1 gap-1"
+        : points.length === 2
+          ? "grid grid-cols-2 gap-1"
+          : points.length === 3
+            ? "grid grid-cols-3 gap-1"
+            : "grid grid-cols-4 gap-0.5"
+      : "";
+
+  const desktopDotR = points.length === 1 ? 1.65 : 1.25;
+  const mobileDotR = points.length === 1 ? 2.8 : 2;
+  const dotR = compactLegend ? mobileDotR : desktopDotR;
+  const dotStroke = compactLegend ? 0.5 : 0.4;
+
+  const legendCells = points.map((point, idx) => (
+    <div key={point.date} className="min-w-0 px-0.5">
+      <p className="truncate text-[9px] leading-tight text-zinc-500">{point.label}</p>
+      <p
+        className={`mt-0.5 text-[11px] font-medium tabular-nums ${
+          idx === points.length - 1 ? "text-jagger-300" : "text-zinc-300"
+        }`}
+      >
+        {point.weight.toFixed(1)} kg
+      </p>
+    </div>
+  ));
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className="relative h-44 w-full rounded-xl border border-zinc-800/80 bg-zinc-950/40 pl-8 pr-1 pt-2">
-        <svg
-          viewBox="0 0 100 100"
-          className="h-full w-full overflow-visible text-jagger-400"
-          preserveAspectRatio="none"
-          aria-hidden
-        >
-          <defs>
-            <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#0ea5e9" stopOpacity="0.35" />
-              <stop offset="100%" stopColor="#09090b" stopOpacity="0" />
-            </linearGradient>
-          </defs>
-          {[0, 0.25, 0.5, 0.75, 1].map((t) => {
-            const y = 8 + (1 - t) * 84;
-            return (
-              <line
-                key={t}
-                x1="0"
-                x2="100"
-                y1={y}
-                y2={y}
-                className="stroke-zinc-800/60"
-                strokeWidth="0.22"
-                vectorEffect="non-scaling-stroke"
-              />
-            );
-          })}
-          <path d={areaPath} fill={`url(#${gradId})`} />
-          <path
-            d={linePath}
-            fill="none"
-            className="stroke-jagger-400"
-            strokeWidth="1.25"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            vectorEffect="non-scaling-stroke"
-          />
-          {circles.map((pt, i) => (
-            <circle
-              key={`${points[i].date}-${i}`}
-              cx={pt.x}
-              cy={pt.y}
-              r={points.length === 1 ? 2 : 1.4}
-              className="fill-zinc-100 stroke-jagger-500"
-              strokeWidth="0.35"
-              vectorEffect="non-scaling-stroke"
-            />
-          ))}
-        </svg>
-        <div className="pointer-events-none absolute left-2 top-2 flex h-[calc(100%-0.5rem)] w-6 flex-col justify-between text-[9px] tabular-nums text-zinc-500">
-          <span>{yMax.toFixed(1)}</span>
-          <span>{yMin.toFixed(1)}</span>
-        </div>
-      </div>
-      <div className="scrollbar-hide -mx-px overflow-x-auto pb-0.5">
-        <div className="flex w-max min-w-full flex-nowrap justify-start gap-3 px-0.5 text-center">
-          {points.map((point, idx) => (
-            <div
-              key={point.date}
-              className="w-[4.25rem] shrink-0 sm:w-[4.75rem]"
-            >
-              <p className="truncate text-[9px] text-zinc-500">{point.label}</p>
-              <p
-                className={`text-[11px] font-medium tabular-nums ${
-                  idx === points.length - 1 ? "text-jagger-300" : "text-zinc-300"
-                }`}
+    <div className="flex min-w-0 w-full flex-col gap-2">
+      <div className="w-full min-w-0 max-w-full overflow-hidden rounded-xl border border-zinc-800/80 bg-zinc-950/40 px-2 pt-2 pb-1 sm:px-3 sm:pt-2">
+        <div className="flex min-w-0 gap-1.5 sm:gap-2">
+          <div className="flex w-7 shrink-0 flex-col justify-between py-1 text-[9px] tabular-nums leading-none text-zinc-500 sm:w-8">
+            <span>{yMax.toFixed(1)}</span>
+            <span>{yMin.toFixed(1)}</span>
+          </div>
+          <div className="flex min-w-0 flex-1 flex-col gap-1.5 sm:gap-2">
+            {/* viewBox 2:1 = proporção da área — escala uniforme (sem achatar círculos) */}
+            <div className="aspect-[2/1] w-full max-h-[11rem] sm:max-h-[13.5rem]">
+              <svg
+                viewBox={`0 0 ${vbW} ${vbH}`}
+                className="h-full w-full text-jagger-400"
+                preserveAspectRatio="none"
+                aria-hidden
               >
-                {point.weight.toFixed(1)} kg
-              </p>
+                <defs>
+                  <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#0ea5e9" stopOpacity="0.35" />
+                    <stop offset="100%" stopColor="#09090b" stopOpacity="0" />
+                  </linearGradient>
+                </defs>
+                {[0, 0.25, 0.5, 0.75, 1].map((t) => {
+                  const y = 8 + (1 - t) * 84;
+                  return (
+                    <line
+                      key={t}
+                      x1="0"
+                      x2={vbW}
+                      y1={y}
+                      y2={y}
+                      className="stroke-zinc-800/60"
+                      strokeWidth="0.35"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  );
+                })}
+                <path d={areaPath} fill={`url(#${gradId})`} />
+                <path
+                  d={linePath}
+                  fill="none"
+                  className="stroke-jagger-400"
+                  strokeWidth={compactLegend ? 1.25 : 1.05}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  vectorEffect="non-scaling-stroke"
+                />
+                {circles.map((pt, i) => (
+                  <circle
+                    key={`${points[i].date}-${i}`}
+                    cx={pt.x}
+                    cy={pt.y}
+                    r={dotR}
+                    className="fill-zinc-100 stroke-jagger-500"
+                    strokeWidth={dotStroke}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                ))}
+              </svg>
             </div>
-          ))}
+            {/* Desktop: mesma largura do SVG — colunas alinhadas às bolinhas */}
+            {!compactLegend && points.length > 0 && (
+              <div
+                className="grid w-full gap-x-0.5 text-center sm:gap-x-1"
+                style={{
+                  gridTemplateColumns: `repeat(${points.length}, minmax(0, 1fr))`,
+                }}
+              >
+                {legendCells}
+              </div>
+            )}
+          </div>
         </div>
       </div>
+      {compactLegend && (
+        <div className="w-full min-w-0 px-0.5 pb-0.5 sm:px-0">
+          <div className={`text-center ${legendGridClass}`}>{legendCells}</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -783,6 +863,19 @@ function PerfilPageContent() {
       };
     });
   }, [weightHistory]);
+
+  const isBelowSm = useIsBelowSm();
+
+  const weightChartPoints = useMemo(() => {
+    if (!isBelowSm || progress.length <= 4) return progress;
+    return selectFourPointsForMobileChart(progress);
+  }, [isBelowSm, progress]);
+
+  const weightChartYExtent = useMemo(() => {
+    if (!progress.length) return null;
+    const w = progress.map((p) => p.weight);
+    return { min: Math.min(...w), max: Math.max(...w) };
+  }, [progress]);
 
   const [isAnthropometryModalOpen, setIsAnthropometryModalOpen] = useState(false);
   const [isCurrentWeightModalOpen, setIsCurrentWeightModalOpen] = useState(false);
@@ -1381,7 +1474,7 @@ function PerfilPageContent() {
           </section>
 
           {/* Progress Chart */}
-          <section className="glass-panel rounded-3xl p-4">
+          <section className="glass-panel min-w-0 rounded-3xl p-4">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-sm font-medium text-zinc-100">
                 Evolução de Peso
@@ -1393,7 +1486,15 @@ function PerfilPageContent() {
               )}
             </div>
             {progress.length > 0 ? (
-              <WeightEvolutionChart points={progress} />
+              <WeightEvolutionChart
+                points={weightChartPoints}
+                yExtent={
+                  isBelowSm && progress.length > 4
+                    ? weightChartYExtent
+                    : null
+                }
+                compactLegend={isBelowSm}
+              />
             ) : (
               <div className="flex items-center justify-center h-48 text-zinc-500 text-sm">
                 Clique em "Peso Atual" para adicionar sua primeira pesagem
