@@ -12,6 +12,19 @@ import {
   UserProfile
 } from "@/types/meals";
 import { workoutService } from "@/lib/firebaseService";
+import {
+  getCompletedExerciseCount,
+  isWorkoutDayCompleted,
+  MIN_COMPLETED_EXERCISES_FOR_WORKOUT_DAY,
+} from "@/lib/workoutProgress";
+import {
+  getSelectedExercise,
+  hasAlternativeExercise,
+  isCardioExercise,
+  type ExerciseAlternative,
+  type ExerciseSelection,
+  type ExerciseType,
+} from "@/lib/workoutExercise";
 
 function getDaysInMonth(year: number, month: number): Date[] {
   const firstDay = new Date(year, month, 1);
@@ -35,11 +48,13 @@ type Exercise = {
   averageSpeed?: number;
   videoUrl?: string; // URL do YouTube
   // Novos campos da página de ajustes
-  type?: "strength" | "cardio" | "custom";
+  type?: ExerciseType;
   rest?: number; // segundos - obrigatório
   reps?: string;
   intensity?: string;
   activityTemplateId?: string;
+  alternative?: ExerciseAlternative;
+  selectedOption?: ExerciseSelection;
 };
 
 type WorkoutDay = {
@@ -133,6 +148,98 @@ function estimateStrengthDuration(exerciseName: string): number {
   }
   // Padrão: 4 séries = 8 minutos
   return 8;
+}
+
+function normalizeAlternativeExercise(exercise: Exercise, alternative?: any): ExerciseAlternative | undefined {
+  if (!alternative) return undefined;
+
+  return {
+    ...alternative,
+    sets: typeof alternative.sets === "number"
+      ? alternative.sets
+      : (typeof alternative.sets === "string" ? parseInt(alternative.sets) || 0 : undefined),
+    reps: alternative.reps || "",
+    rest: alternative.rest !== undefined ? alternative.rest : (exercise.type === "cardio" ? 30 : 60),
+    videoUrl: alternative.videoUrl || undefined,
+    intensity: alternative.intensity || undefined,
+    activityTemplateId: alternative.activityTemplateId || undefined,
+  };
+}
+
+function normalizeWorkoutExercise(exercise: any): Exercise {
+  let setsValue: string | number = exercise.sets || "";
+  if (typeof exercise.sets === "number" && exercise.reps) {
+    setsValue = `${exercise.sets}x${exercise.reps}`;
+  } else if (typeof exercise.sets === "number") {
+    setsValue = exercise.sets;
+  } else if (typeof exercise.sets === "string") {
+    setsValue = exercise.sets;
+  }
+
+  const normalizedExercise: Exercise = {
+    ...exercise,
+    sets: setsValue,
+    rest: exercise.rest !== undefined ? exercise.rest : 0,
+    videoUrl: exercise.videoUrl || undefined,
+    type: exercise.type || undefined,
+    reps: exercise.reps || undefined,
+    intensity: exercise.intensity || undefined,
+    activityTemplateId: exercise.activityTemplateId || undefined,
+    selectedOption: exercise.selectedOption === "alternative" ? "alternative" : "primary",
+  };
+
+  const alternative = normalizeAlternativeExercise(normalizedExercise, exercise.alternative);
+  if (alternative) {
+    normalizedExercise.alternative = alternative;
+  }
+
+  return normalizedExercise;
+}
+
+function formatAlternativeForStorage(alternative?: ExerciseAlternative) {
+  if (!alternative) return undefined;
+
+  return {
+    name: alternative.name,
+    sets: typeof alternative.sets === "number"
+      ? alternative.sets
+      : (typeof alternative.sets === "string" ? parseInt(alternative.sets) || 0 : undefined),
+    reps: alternative.reps || "",
+    rest: alternative.rest,
+    weight: alternative.weight,
+    minutes: alternative.minutes,
+    averageSpeed: alternative.averageSpeed,
+    videoUrl: alternative.videoUrl,
+    intensity: alternative.intensity,
+    activityTemplateId: alternative.activityTemplateId,
+  };
+}
+
+function formatExerciseForStorage(exercise: Exercise) {
+  const formattedExercise: any = {
+    id: exercise.id,
+    name: exercise.name,
+    type: exercise.type || "strength",
+    sets: typeof exercise.sets === "number" ? exercise.sets : (typeof exercise.sets === "string" ? parseInt(exercise.sets) || 0 : 0),
+    reps: exercise.reps || "",
+    rest: exercise.rest !== undefined ? exercise.rest : (exercise.type === "cardio" ? 30 : 60),
+    completed: exercise.completed,
+    selectedOption: exercise.selectedOption || "primary",
+  };
+
+  if (exercise.weight !== undefined) formattedExercise.weight = exercise.weight;
+  if (exercise.minutes !== undefined) formattedExercise.minutes = exercise.minutes;
+  if (exercise.averageSpeed !== undefined) formattedExercise.averageSpeed = exercise.averageSpeed;
+  if (exercise.videoUrl) formattedExercise.videoUrl = exercise.videoUrl;
+  if (exercise.intensity) formattedExercise.intensity = exercise.intensity;
+  if (exercise.activityTemplateId) formattedExercise.activityTemplateId = exercise.activityTemplateId;
+
+  const alternative = formatAlternativeForStorage(exercise.alternative);
+  if (alternative) {
+    formattedExercise.alternative = alternative;
+  }
+
+  return formattedExercise;
 }
 
 function getWorkoutForDate(date: Date, allWorkouts: WorkoutDay[]): WorkoutDay | null {
@@ -312,32 +419,42 @@ function ExerciseCard({
   exercise,
   onComplete,
   onUpdate,
+  onSelectOption,
 }: {
   exercise: Exercise;
   onComplete: (id: string, weight?: number, minutes?: number, averageSpeed?: number) => void;
   onUpdate?: (id: string, weight?: number, minutes?: number, averageSpeed?: number) => void;
+  onSelectOption?: (id: string, option: ExerciseSelection) => void;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [weight, setWeight] = useState<string>(exercise.weight?.toString() || "");
   const [minutes, setMinutes] = useState<string>(exercise.minutes?.toString() || "");
   const [averageSpeed, setAverageSpeed] = useState<string>(exercise.averageSpeed?.toString() || "");
   const [weeklyRecord, setWeeklyRecord] = useState<number | null>(null);
-
-  const isCardio = exercise.type === "cardio" || exercise.name.includes("🚶") || exercise.name.includes("🏃") || exercise.name.toLowerCase().includes("cardio") || exercise.minutes !== undefined;
+  const selectedExercise = getSelectedExercise(exercise);
+  const isCardio = isCardioExercise(exercise);
+  const hasAlternative = hasAlternativeExercise(exercise);
 
   // Buscar record da semana quando o componente montar ou quando o exercício mudar
   useEffect(() => {
     if (!isCardio && exercise.id) {
-      getWeeklyRecord(exercise.name, exercise.id).then(setWeeklyRecord);
+      getWeeklyRecord(selectedExercise.name, exercise.id).then(setWeeklyRecord);
     }
-  }, [exercise.id, exercise.name, isCardio]);
+  }, [exercise.id, selectedExercise.name, isCardio]);
 
   // Atualizar valores quando o exercício mudar
   useEffect(() => {
-    setWeight(exercise.weight?.toString() || "");
-    setMinutes(exercise.minutes?.toString() || "");
-    setAverageSpeed(exercise.averageSpeed?.toString() || "");
-  }, [exercise.weight, exercise.minutes, exercise.averageSpeed]);
+    setWeight((exercise.weight ?? selectedExercise.weight)?.toString() || "");
+    setMinutes((exercise.minutes ?? selectedExercise.minutes)?.toString() || "");
+    setAverageSpeed((exercise.averageSpeed ?? selectedExercise.averageSpeed)?.toString() || "");
+  }, [
+    exercise.weight,
+    exercise.minutes,
+    exercise.averageSpeed,
+    selectedExercise.weight,
+    selectedExercise.minutes,
+    selectedExercise.averageSpeed,
+  ]);
 
   const handleComplete = () => {
     if (isCardio) {
@@ -381,37 +498,37 @@ function ExerciseCard({
                 exercise.completed ? "text-emerald-300" : "text-zinc-100"
               }`}
             >
-              {exercise.name}
+              {selectedExercise.name}
             </p>
             <p className="mt-0.5 text-[11px] text-zinc-400 sm:text-xs">
               {isCardio ? (
                 // Para cardio, não mostrar séries/reps, apenas o nome completo
-                exercise.name.includes("🚶") || exercise.name.includes("🏃") || exercise.name.toLowerCase().includes("cardio")
+                selectedExercise.name.includes("🚶") || selectedExercise.name.includes("🏃") || selectedExercise.name.toLowerCase().includes("cardio")
                   ? "" // Cardio mostra apenas o nome completo no título
-                  : exercise.minutes 
-                    ? `${exercise.minutes} min`
+                  : selectedExercise.minutes 
+                    ? `${selectedExercise.minutes} min`
                     : ""
               ) : (
                 // Para exercícios de força
                 (() => {
                   // Se sets é string como "3x12", usar diretamente
-                  if (typeof exercise.sets === "string" && exercise.sets.includes("x")) {
-                    return exercise.sets;
+                  if (typeof selectedExercise.sets === "string" && selectedExercise.sets.includes("x")) {
+                    return selectedExercise.sets;
                   }
                   // Se sets é número e tem reps, formatar como "3x12"
-                  if (typeof exercise.sets === "number" && exercise.reps) {
-                    return `${exercise.sets}x${exercise.reps}`;
+                  if (typeof selectedExercise.sets === "number" && selectedExercise.reps) {
+                    return `${selectedExercise.sets}x${selectedExercise.reps}`;
                   }
                   // Se sets é string mas não tem "x", usar como está
-                  if (typeof exercise.sets === "string" && exercise.sets) {
-                    return exercise.sets;
+                  if (typeof selectedExercise.sets === "string" && selectedExercise.sets) {
+                    return selectedExercise.sets;
                   }
                   // Se sets é número mas não tem reps, mostrar apenas o número
-                  if (typeof exercise.sets === "number") {
-                    return exercise.sets.toString();
+                  if (typeof selectedExercise.sets === "number") {
+                    return selectedExercise.sets.toString();
                   }
                   return "";
-                })() + (exercise.rest !== undefined && exercise.rest !== null && exercise.rest >= 0 ? ` • ${exercise.rest}s descanso` : "")
+                })() + (selectedExercise.rest !== undefined && selectedExercise.rest !== null && selectedExercise.rest >= 0 ? ` • ${selectedExercise.rest}s descanso` : "")
               )}
               {exercise.completed && (
                 <>
@@ -436,8 +553,33 @@ function ExerciseCard({
 
       {isOpen && (
         <div className="border-t border-zinc-800/80 px-3 py-2.5 space-y-2.5 sm:px-4 sm:py-3 sm:space-y-3">
-          {exercise.videoUrl && exercise.videoUrl.trim() !== "" && (
-            <VideoPlayer url={exercise.videoUrl} />
+          {hasAlternative && onSelectOption && (
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => onSelectOption(exercise.id, "primary")}
+                className={`rounded-xl border px-3 py-2 text-xs transition-colors ${
+                  (exercise.selectedOption || "primary") === "primary"
+                    ? "border-jagger-400 bg-jagger-500/20 text-jagger-200"
+                    : "border-zinc-700/80 bg-zinc-900/60 text-zinc-400 hover:border-zinc-600"
+                }`}
+              >
+                Principal
+              </button>
+              <button
+                onClick={() => onSelectOption(exercise.id, "alternative")}
+                className={`rounded-xl border px-3 py-2 text-xs transition-colors ${
+                  exercise.selectedOption === "alternative"
+                    ? "border-jagger-400 bg-jagger-500/20 text-jagger-200"
+                    : "border-zinc-700/80 bg-zinc-900/60 text-zinc-400 hover:border-zinc-600"
+                }`}
+              >
+                Alternativa
+              </button>
+            </div>
+          )}
+
+          {selectedExercise.videoUrl && selectedExercise.videoUrl.trim() !== "" && (
+            <VideoPlayer url={selectedExercise.videoUrl} />
           )}
 
           {isCardio ? (
@@ -540,15 +682,7 @@ export default function TreinoPage() {
             workoutForDate = {
               ...savedDateWorkout,
               date,
-              exercises: savedDateWorkout.exercises.map((ex: any) => ({
-                ...ex,
-                rest: ex.rest !== undefined ? ex.rest : 0,
-                videoUrl: ex.videoUrl || undefined,
-                type: ex.type || undefined,
-                reps: ex.reps || undefined,
-                intensity: ex.intensity || undefined,
-                activityTemplateId: ex.activityTemplateId || undefined,
-              })),
+              exercises: savedDateWorkout.exercises.map((ex: any) => normalizeWorkoutExercise(ex)),
             };
           }
         } catch (e) {
@@ -578,6 +712,11 @@ export default function TreinoPage() {
                 videoUrl: ex.videoUrl || undefined,
                 intensity: ex.intensity || undefined,
                 activityTemplateId: ex.activityTemplateId || undefined,
+                alternative: normalizeAlternativeExercise(
+                  { id: ex.id || "", name: ex.name || "", type: ex.type || "strength", sets: ex.sets || "", completed: false } as Exercise,
+                  ex.alternative
+                ),
+                selectedOption: "primary",
               })),
               isWeekend: dayConfig.isWeekend !== undefined ? dayConfig.isWeekend : isWeekend,
             };
@@ -599,6 +738,7 @@ export default function TreinoPage() {
                 sets: typeof ex.sets === "string" ? parseInt(ex.sets) || 0 : ex.sets,
                 type: ex.type || (ex.name.includes("🚶") || ex.name.includes("🏃") || ex.name.toLowerCase().includes("cardio") ? "cardio" : "strength"),
                 rest: ex.rest !== undefined ? ex.rest : (ex.type === "cardio" ? 30 : 60),
+                selectedOption: "primary" as const,
               })),
               isWeekend,
             };
@@ -656,15 +796,7 @@ export default function TreinoPage() {
             workoutForDate = {
               ...savedDateWorkout,
               date,
-              exercises: savedDateWorkout.exercises.map((ex: any) => ({
-                ...ex,
-                rest: ex.rest !== undefined ? ex.rest : 0,
-                videoUrl: ex.videoUrl || undefined,
-                type: ex.type || undefined,
-                reps: ex.reps || undefined,
-                intensity: ex.intensity || undefined,
-                activityTemplateId: ex.activityTemplateId || undefined,
-              })),
+              exercises: savedDateWorkout.exercises.map((ex: any) => normalizeWorkoutExercise(ex)),
             };
           }
         } catch (e) {
@@ -694,6 +826,11 @@ export default function TreinoPage() {
                 videoUrl: ex.videoUrl || undefined,
                 intensity: ex.intensity || undefined,
                 activityTemplateId: ex.activityTemplateId || undefined,
+                alternative: normalizeAlternativeExercise(
+                  { id: ex.id || "", name: ex.name || "", type: ex.type || "strength", sets: ex.sets || "", completed: false } as Exercise,
+                  ex.alternative
+                ),
+                selectedOption: "primary",
               })),
               isWeekend: dayConfig.isWeekend !== undefined ? dayConfig.isWeekend : (dayOfWeek === 0 || dayOfWeek === 6),
             };
@@ -713,6 +850,7 @@ export default function TreinoPage() {
                 ...ex,
                 completed: false,
                 sets: typeof ex.sets === "string" ? parseInt(ex.sets) || 0 : ex.sets,
+                selectedOption: "primary" as const,
               })),
               isWeekend: dayOfWeek === 0 || dayOfWeek === 6,
             };
@@ -760,28 +898,7 @@ export default function TreinoPage() {
           workoutForDate = {
             ...savedDateWorkout,
             date: selectedDate,
-            exercises: savedDateWorkout.exercises.map((ex: any) => {
-              // Se sets é número e reps existe, reconstruir como string "3x12"
-              let setsValue: string | number = ex.sets || "";
-              if (typeof ex.sets === "number" && ex.reps) {
-                setsValue = `${ex.sets}x${ex.reps}`;
-              } else if (typeof ex.sets === "number") {
-                setsValue = ex.sets;
-              } else if (typeof ex.sets === "string") {
-                setsValue = ex.sets;
-              }
-              
-              return {
-                ...ex,
-                sets: setsValue,
-                rest: ex.rest !== undefined ? ex.rest : 0,
-                videoUrl: ex.videoUrl || undefined,
-                type: ex.type || undefined,
-                reps: ex.reps || undefined,
-                intensity: ex.intensity || undefined,
-                activityTemplateId: ex.activityTemplateId || undefined,
-              };
-            }),
+            exercises: savedDateWorkout.exercises.map((ex: any) => normalizeWorkoutExercise(ex)),
           };
         }
       } catch (e) {
@@ -800,33 +917,15 @@ export default function TreinoPage() {
                 dayOfWeek: dayName,
                 dayLabel: dayConfig.dayLabel || dayName.charAt(0).toUpperCase() + dayName.slice(1),
                 muscleGroup: dayConfig.muscleGroup || "",
-                exercises: dayConfig.exercises.map((ex: any) => {
-                  // Se sets é número e reps existe, reconstruir como string "3x12"
-                  let setsValue: string | number = ex.sets || "";
-                  if (typeof ex.sets === "number" && ex.reps) {
-                    setsValue = `${ex.sets}x${ex.reps}`;
-                  } else if (typeof ex.sets === "number") {
-                    setsValue = ex.sets;
-                  } else if (typeof ex.sets === "string") {
-                    setsValue = ex.sets;
-                  }
-                  
-                  return {
+                exercises: dayConfig.exercises.map((ex: any) =>
+                  normalizeWorkoutExercise({
+                    ...ex,
                     id: ex.id || Date.now().toString() + Math.random(),
                     name: ex.name || "",
                     type: ex.type || "strength",
-                    sets: setsValue,
-                    reps: ex.reps || "",
-                    rest: ex.rest !== undefined ? ex.rest : (ex.type === "cardio" ? 30 : 60),
                     completed: false,
-                    weight: ex.weight,
-                    minutes: ex.minutes,
-                    averageSpeed: ex.averageSpeed,
-                    videoUrl: ex.videoUrl || undefined,
-                    intensity: ex.intensity || undefined,
-                    activityTemplateId: ex.activityTemplateId || undefined,
-                  };
-                }),
+                  })
+                ),
                 isWeekend: dayConfig.isWeekend !== undefined ? dayConfig.isWeekend : (dayOfWeek === 0 || dayOfWeek === 6),
               };
             }
@@ -848,6 +947,7 @@ export default function TreinoPage() {
           exercises: workoutData.exercises.map((ex) => ({
             ...ex,
             completed: false,
+            selectedOption: "primary" as const,
           })),
           isWeekend: dayOfWeek === 0 || dayOfWeek === 6,
         };
@@ -928,27 +1028,7 @@ export default function TreinoPage() {
       const dateKey = selectedDate.toISOString().split("T")[0];
       try {
         // Converter para o formato esperado pelo Firebase (sem Date object e sem undefined)
-        const exercisesFormatted = workout.exercises.map((ex) => {
-          const exercise: any = {
-            id: ex.id,
-            name: ex.name,
-            type: ex.type || "strength",
-            sets: typeof ex.sets === "number" ? ex.sets : (typeof ex.sets === "string" ? parseInt(ex.sets) || 0 : 0),
-            reps: ex.reps || "",
-            rest: ex.rest !== undefined ? ex.rest : (ex.type === "cardio" ? 30 : 60),
-            completed: ex.completed,
-          };
-          
-          // Adicionar campos opcionais apenas se existirem
-          if (ex.weight !== undefined) exercise.weight = ex.weight;
-          if (ex.minutes !== undefined) exercise.minutes = ex.minutes;
-          if (ex.averageSpeed !== undefined) exercise.averageSpeed = ex.averageSpeed;
-          if (ex.videoUrl) exercise.videoUrl = ex.videoUrl;
-          if (ex.intensity) exercise.intensity = ex.intensity;
-          if (ex.activityTemplateId) exercise.activityTemplateId = ex.activityTemplateId;
-          
-          return exercise;
-        });
+        const exercisesFormatted = workout.exercises.map(formatExerciseForStorage);
         
         const workoutToSaveFormatted: any = {
           dayOfWeek: workout.dayOfWeek,
@@ -967,6 +1047,39 @@ export default function TreinoPage() {
       } catch (error) {
         console.error("Erro ao atualizar treino:", error);
         alert(`Erro ao atualizar treino: ${error instanceof Error ? error.message : "Erro desconhecido"}`);
+      }
+    }
+  };
+
+  const handleSelectExerciseOption = async (exerciseId: string, selectedOption: ExerciseSelection) => {
+    let workoutToSave: WorkoutDay | null = null;
+
+    setWorkouts((prev) => {
+      const newWorkouts = new Map(prev);
+      const workout = newWorkouts.get(selectedDate.toISOString());
+      if (workout) {
+        workout.exercises = workout.exercises.map((ex) =>
+          ex.id === exerciseId ? { ...ex, selectedOption } : ex
+        );
+        newWorkouts.set(selectedDate.toISOString(), workout);
+        workoutToSave = { ...workout };
+      }
+      return newWorkouts;
+    });
+
+    if (workoutToSave) {
+      const workout: WorkoutDay = workoutToSave;
+      const dateKey = selectedDate.toISOString().split("T")[0];
+      try {
+        await workoutService.saveWorkout(dateKey, {
+          dayOfWeek: workout.dayOfWeek,
+          dayLabel: workout.dayLabel,
+          muscleGroup: workout.muscleGroup,
+          exercises: workout.exercises.map(formatExerciseForStorage),
+          isWeekend: workout.isWeekend,
+        } as any);
+      } catch (error) {
+        console.error("Erro ao selecionar opção do exercício:", error);
       }
     }
   };
@@ -995,27 +1108,7 @@ export default function TreinoPage() {
       const dateKey = selectedDate.toISOString().split("T")[0];
       try {
         // Converter para o formato esperado pelo Firebase (sem Date object e sem undefined)
-        const exercisesFormatted = workout.exercises.map((ex) => {
-          const exercise: any = {
-            id: ex.id,
-            name: ex.name,
-            type: ex.type || "strength",
-            sets: typeof ex.sets === "number" ? ex.sets : (typeof ex.sets === "string" ? parseInt(ex.sets) || 0 : 0),
-            reps: ex.reps || "",
-            rest: ex.rest !== undefined ? ex.rest : (ex.type === "cardio" ? 30 : 60),
-            completed: ex.completed,
-          };
-          
-          // Adicionar campos opcionais apenas se existirem
-          if (ex.weight !== undefined) exercise.weight = ex.weight;
-          if (ex.minutes !== undefined) exercise.minutes = ex.minutes;
-          if (ex.averageSpeed !== undefined) exercise.averageSpeed = ex.averageSpeed;
-          if (ex.videoUrl) exercise.videoUrl = ex.videoUrl;
-          if (ex.intensity) exercise.intensity = ex.intensity;
-          if (ex.activityTemplateId) exercise.activityTemplateId = ex.activityTemplateId;
-          
-          return exercise;
-        });
+        const exercisesFormatted = workout.exercises.map(formatExerciseForStorage);
         
         const workoutToSaveFormatted: any = {
           dayOfWeek: workout.dayOfWeek,
@@ -1040,21 +1133,22 @@ export default function TreinoPage() {
     // Salvar atividade física para cálculo de gasto calórico usando METs
     const exercise = currentWorkout?.exercises.find((ex) => ex.id === exerciseId);
     if (exercise) {
+      const selectedExercise = getSelectedExercise(exercise);
       const dateKey = selectedDate.toISOString().split("T")[0];
       
       // Determinar MET e duração
-      const met = getExerciseMET(exercise.name, minutes, averageSpeed);
+      const met = getExerciseMET(selectedExercise.name, minutes, averageSpeed);
       let durationMinutes = minutes;
       
       // Se não tiver minutos informados e for musculação, estimar
       if (!durationMinutes) {
-        const isStrength = !exercise.name.includes("🚶") && 
-                          !exercise.name.includes("🏃") && 
-                          !exercise.name.toLowerCase().includes("cardio") &&
-                          !exercise.name.toLowerCase().includes("caminhada") &&
-                          !exercise.name.toLowerCase().includes("corrida");
+        const isStrength = !selectedExercise.name.includes("🚶") && 
+                          !selectedExercise.name.includes("🏃") && 
+                          !selectedExercise.name.toLowerCase().includes("cardio") &&
+                          !selectedExercise.name.toLowerCase().includes("caminhada") &&
+                          !selectedExercise.name.toLowerCase().includes("corrida");
         if (isStrength) {
-          durationMinutes = estimateStrengthDuration(exercise.name);
+          durationMinutes = estimateStrengthDuration(selectedExercise.name);
         } else {
           // Para cardio sem minutos, não calcular (precisa de duração)
           return;
@@ -1069,17 +1163,17 @@ export default function TreinoPage() {
       );
 
       if (caloriesBurned > 0) {
-        const isCardio = exercise.name.includes("🚶") || 
-                        exercise.name.includes("🏃") || 
-                        exercise.name.toLowerCase().includes("cardio") ||
-                        exercise.name.toLowerCase().includes("caminhada") ||
-                        exercise.name.toLowerCase().includes("corrida") ||
-                        exercise.name.toLowerCase().includes("bicicleta") ||
-                        exercise.name.toLowerCase().includes("natação");
+        const isCardio = selectedExercise.name.includes("🚶") || 
+                        selectedExercise.name.includes("🏃") || 
+                        selectedExercise.name.toLowerCase().includes("cardio") ||
+                        selectedExercise.name.toLowerCase().includes("caminhada") ||
+                        selectedExercise.name.toLowerCase().includes("corrida") ||
+                        selectedExercise.name.toLowerCase().includes("bicicleta") ||
+                        selectedExercise.name.toLowerCase().includes("natação");
         
         const activity: PhysicalActivity = {
           id: `activity_${exerciseId}_${Date.now()}`,
-          name: exercise.name,
+          name: selectedExercise.name,
           type: isCardio ? "walking" : "workout",
           caloriesBurned,
           duration: durationMinutes,
@@ -1118,11 +1212,16 @@ export default function TreinoPage() {
 
   const getDayStatus = (workout: WorkoutDay | undefined) => {
     if (!workout || workout.exercises.length === 0) {
-      return { completed: 0, total: 0, percentage: 0 };
+      return { completed: 0, total: 0, percentage: 0, goalMet: false };
     }
-    const completed = workout.exercises.filter((e) => e.completed).length;
+    const completed = getCompletedExerciseCount(workout.exercises);
     const total = workout.exercises.length;
-    return { completed, total, percentage: (completed / total) * 100 };
+    return {
+      completed,
+      total,
+      percentage: (completed / total) * 100,
+      goalMet: isWorkoutDayCompleted(workout.exercises),
+    };
   };
 
   const isToday = (date: Date) => {
@@ -1259,14 +1358,17 @@ export default function TreinoPage() {
                 onUpdate={(id, weight, minutes, averageSpeed) =>
                   handleUpdateExercise(id, weight, minutes, averageSpeed)
                 }
+                onSelectOption={(id, option) =>
+                  handleSelectExerciseOption(id, option)
+                }
               />
             ))}
           </div>
 
-          {getDayStatus(currentWorkout).percentage === 100 && (
+          {getDayStatus(currentWorkout).goalMet && (
             <div className="mt-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/40 px-4 py-3 text-center">
               <p className="text-sm font-medium text-emerald-300">
-                ✅ Treino completo! Missão cumprida.
+                ✅ Dia de treino contado. Você bateu a meta de {MIN_COMPLETED_EXERCISES_FOR_WORKOUT_DAY} exercícios concluídos.
               </p>
             </div>
           )}

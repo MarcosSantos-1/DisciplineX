@@ -13,6 +13,7 @@ import {
 import { createPortal } from "react-dom";
 import { useSearchParams, useRouter } from "next/navigation";
 import { ChecklistConfig } from "@/components/ChecklistConfig";
+import { MealConfig } from "@/components/MealConfig";
 import { calculateBMR, UserProfile, PhysicalActivity } from "@/types/meals";
 import { profileService, checklistService, workoutService, mealService, libraryService } from "@/lib/firebaseService";
 
@@ -759,19 +760,27 @@ function PerfilPageContent() {
   const router = useRouter();
   
   // Verificar se veio da página de configuração de checklist
-  const initialTab = searchParams.get("tab") === "checklist-config" 
-    ? "checklist-config" 
-    : searchParams.get("tab") === "settings"
-    ? "settings"
-    : "overview";
-  
-  const [activeTab, setActiveTab] = useState<"overview" | "reports" | "settings" | "checklist-config">(initialTab);
+  const tabParam = searchParams.get("tab");
+  const initialTab =
+    tabParam === "checklist-config"
+      ? "checklist-config"
+      : tabParam === "meal-config"
+        ? "meal-config"
+        : tabParam === "settings"
+          ? "settings"
+          : "overview";
+
+  const [activeTab, setActiveTab] = useState<
+    "overview" | "reports" | "settings" | "checklist-config" | "meal-config"
+  >(initialTab);
 
   // Atualizar quando a URL mudar
   useEffect(() => {
     const tab = searchParams.get("tab");
     if (tab === "checklist-config") {
       setActiveTab("checklist-config");
+    } else if (tab === "meal-config") {
+      setActiveTab("meal-config");
     } else if (tab === "settings") {
       setActiveTab("settings");
     }
@@ -1827,6 +1836,20 @@ function PerfilPageContent() {
                 Configurar dias padrões e tipos de jejum
               </p>
             </button>
+
+            <button
+              type="button"
+              onClick={() => router.push("/perfil?tab=meal-config")}
+              className="flex flex-col items-start gap-2 rounded-2xl border border-zinc-800/80 bg-zinc-950/60 p-4 text-left transition-colors hover:border-jagger-400/60 hover:bg-zinc-900/60"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-xl">🍽️</span>
+                <span className="text-sm font-medium text-zinc-100">Refeições</span>
+              </div>
+              <p className="text-xs text-zinc-400">
+                Horários, opções do cardápio, ingredientes e macros
+              </p>
+            </button>
           </div>
         </section>
       )}
@@ -1834,6 +1857,12 @@ function PerfilPageContent() {
       {activeTab === "checklist-config" && (
         <section className="glass-panel rounded-3xl p-4">
           <ChecklistConfig onClose={() => setActiveTab("settings")} />
+        </section>
+      )}
+
+      {activeTab === "meal-config" && (
+        <section className="rounded-3xl border border-zinc-800/90 bg-zinc-950 p-4">
+          <MealConfig onClose={() => setActiveTab("settings")} />
         </section>
       )}
 

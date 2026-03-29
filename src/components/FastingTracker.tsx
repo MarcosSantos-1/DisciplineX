@@ -212,7 +212,7 @@ export function FastingTracker({ date }: FastingTrackerProps) {
   const remainingHours = Math.max(0, fastingType.duration - elapsedHours);
 
   return (
-    <div className="glass-panel rounded-3xl p-4">
+    <div className="rounded-3xl border border-zinc-800/90 bg-zinc-950 p-3 md:p-4">
       <div className="mb-3 flex items-center justify-between">
         <div>
           <h3 className="text-sm font-medium text-zinc-100">
@@ -226,7 +226,7 @@ export function FastingTracker({ date }: FastingTrackerProps) {
 
       {!session ? (
         <div className="flex flex-col gap-3">
-          <div className="rounded-2xl bg-zinc-950/60 border border-zinc-800 p-3 text-center">
+          <div className="rounded-2xl border border-zinc-800/90 bg-zinc-950 p-3 text-center">
             <p className="text-xs text-zinc-400 mb-1">Meta</p>
             <p className="text-lg font-semibold text-zinc-100">
               {fastingType.duration}h de jejum
@@ -249,7 +249,7 @@ export function FastingTracker({ date }: FastingTrackerProps) {
                 {progress.toFixed(1)}%
               </span>
             </div>
-            <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-900/60">
+            <div className="h-2 w-full overflow-hidden rounded-full border border-zinc-800/60 bg-zinc-900">
               <div
                 className="h-full bg-gradient-to-r from-jagger-500 to-jagger-400 transition-all duration-300"
                 style={{ width: `${progress}%` }}
@@ -259,7 +259,7 @@ export function FastingTracker({ date }: FastingTrackerProps) {
 
           {/* Tempo decorrido */}
           <div className="grid grid-cols-2 gap-2">
-            <div className="rounded-xl bg-zinc-950/60 border border-zinc-800 p-3 text-center">
+            <div className="rounded-xl border border-zinc-800/90 bg-zinc-950 p-3 text-center">
               <p className="text-[10px] text-zinc-400 mb-1">Tempo decorrido</p>
               <p className="text-lg font-semibold text-zinc-100">
                 {formatTime(elapsedTime)}
@@ -268,7 +268,7 @@ export function FastingTracker({ date }: FastingTrackerProps) {
                 {elapsedHours.toFixed(1)}h / {fastingType.duration}h
               </p>
             </div>
-            <div className="rounded-xl bg-zinc-950/60 border border-zinc-800 p-3 text-center">
+            <div className="rounded-xl border border-zinc-800/90 bg-zinc-950 p-3 text-center">
               <p className="text-[10px] text-zinc-400 mb-1">Tempo restante</p>
               <p className="text-lg font-semibold text-zinc-100">
                 {formatTime(remainingHours * 60 * 60 * 1000)}
@@ -291,7 +291,7 @@ export function FastingTracker({ date }: FastingTrackerProps) {
                 </button>
                 <button
                   onClick={handleComplete}
-                  className="flex-1 rounded-xl border border-zinc-700/80 bg-zinc-950/60 px-4 py-2.5 text-sm font-medium text-zinc-300 transition-colors hover:border-zinc-600 hover:text-zinc-100"
+                  className="flex-1 rounded-xl border border-zinc-800/90 bg-zinc-950 px-4 py-2.5 text-sm font-medium text-zinc-300 transition-colors hover:border-zinc-600 hover:text-zinc-100"
                 >
                   Finalizar
                 </button>
@@ -300,7 +300,7 @@ export function FastingTracker({ date }: FastingTrackerProps) {
               <>
                 <button
                   onClick={handlePause}
-                  className="flex-1 rounded-xl border border-zinc-700/80 bg-zinc-950/60 px-4 py-2.5 text-sm font-medium text-zinc-300 transition-colors hover:border-zinc-600 hover:text-zinc-100"
+                  className="flex-1 rounded-xl border border-zinc-800/90 bg-zinc-950 px-4 py-2.5 text-sm font-medium text-zinc-300 transition-colors hover:border-zinc-600 hover:text-zinc-100"
                 >
                   Pausar
                 </button>

@@ -105,14 +105,15 @@ export function CircularChart({ calories, macros }: CircularChartProps) {
   const fatPercentage = Math.min((macros.fat.consumed / macros.fat.limit) * 100, 100);
 
   return (
-    <div className="glass-panel rounded-3xl p-4">
-      <div className="flex items-center justify-between gap-2 mb-3">
+    <div className="rounded-3xl border border-zinc-800/90 bg-zinc-950 p-3 md:p-4">
+      <div className="mb-3 flex items-center justify-between gap-2">
         <h3 className="text-sm font-medium text-zinc-100">
           Balanço Calórico de Hoje
         </h3>
         <button
+          type="button"
           onClick={() => setIsExpanded(!isExpanded)}
-          className="rounded-full bg-zinc-900 px-2 py-0.5 text-[11px] text-zinc-400 hover:text-zinc-200 transition-colors"
+          className="rounded-full border border-zinc-800/90 bg-zinc-950 px-2.5 py-1 text-[11px] text-zinc-400 transition-colors hover:text-zinc-200"
         >
           {isExpanded ? "Recolher" : "Expandir"}
         </button>
@@ -135,22 +136,22 @@ export function CircularChart({ calories, macros }: CircularChartProps) {
           />
         </button>
 
-        <div className="mt-4 grid grid-cols-3 gap-3 text-xs w-full">
-          <div className="rounded-2xl bg-zinc-950/60 px-2 py-2 text-center">
+        <div className="mt-4 grid w-full grid-cols-3 gap-3 text-xs">
+          <div className="rounded-2xl border border-zinc-800/90 bg-zinc-950 px-2 py-2 text-center">
             <p className="text-[10px] text-zinc-400">Meta</p>
             <p className="mt-0.5 text-base font-semibold text-zinc-50">
               {calories.limit.toLocaleString()}
             </p>
             <p className="text-[10px] text-zinc-500">kcal</p>
           </div>
-          <div className="rounded-2xl bg-zinc-950/60 px-2 py-2 text-center">
+          <div className="rounded-2xl border border-zinc-800/90 bg-zinc-950 px-2 py-2 text-center">
             <p className="text-[10px] text-zinc-400">🔥 Consumido</p>
             <p className="mt-0.5 text-base font-semibold text-amber-300">
               {calories.consumed.toLocaleString()}
             </p>
             <p className="text-[10px] text-zinc-500">kcal</p>
           </div>
-          <div className="rounded-2xl bg-zinc-950/60 px-2 py-2 text-center">
+          <div className="rounded-2xl border border-zinc-800/90 bg-zinc-950 px-2 py-2 text-center">
             <p className="text-[10px] text-zinc-400">⚡ Gasto Total</p>
             <p className="mt-0.5 text-base font-semibold text-emerald-300">
               {calories.burned.toLocaleString()}
@@ -161,7 +162,7 @@ export function CircularChart({ calories, macros }: CircularChartProps) {
       </div>
 
       {isExpanded && (
-        <div className="mt-6 pt-4 border-t border-zinc-800/80">
+        <div className="mt-6 border-t border-zinc-800/90 pt-4">
           <p className="text-xs font-medium text-zinc-300 mb-4 text-center">
             Macros Nutricionais
           </p>

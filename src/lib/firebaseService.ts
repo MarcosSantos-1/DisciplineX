@@ -12,6 +12,13 @@ import {
   writeBatch
 } from "firebase/firestore";
 import { db } from "./firebase";
+import type { MealSlot } from "@/types/meals";
+import { getMealsForDay } from "@/types/meals";
+
+export type MealPlanStorage = {
+  weekday: MealSlot[];
+  weekend: MealSlot[];
+};
 
 // Tipos de dados
 export type FastingType = {
@@ -50,6 +57,19 @@ export type Exercise = {
   intensity?: string;
   activityTemplateId?: string;
   videoUrl?: string;
+  alternative?: {
+    name: string;
+    sets?: number;
+    reps?: string;
+    rest?: number;
+    weight?: number;
+    minutes?: number;
+    averageSpeed?: number;
+    intensity?: string;
+    activityTemplateId?: string;
+    videoUrl?: string;
+  };
+  selectedOption?: "primary" | "alternative";
 };
 
 export type WorkoutDay = {
@@ -542,6 +562,45 @@ export const mealService = {
       console.error("Erro ao salvar opções customizadas:", error);
       throw error;
     }
+  },
+
+  /** Plano salvo (dias úteis + fim de semana). Se ausente, use os padrões do app. */
+  async getMealPlan(): Promise<MealPlanStorage | null> {
+    try {
+      const docRef = doc(db, "userData", "mealPlan");
+      const docSnap = await getDoc(docRef);
+      if (!docSnap.exists()) return null;
+      const data = docSnap.data();
+      const weekday = data.weekday as MealSlot[] | undefined;
+      const weekend = data.weekend as MealSlot[] | undefined;
+      if (!Array.isArray(weekday) || !Array.isArray(weekend)) return null;
+      if (weekday.length === 0 || weekend.length === 0) return null;
+      return { weekday, weekend };
+    } catch (error) {
+      console.error("Erro ao carregar plano de refeições:", error);
+      return null;
+    }
+  },
+
+  async saveMealPlan(plan: MealPlanStorage): Promise<void> {
+    try {
+      const docRef = doc(db, "userData", "mealPlan");
+      await setDoc(docRef, {
+        weekday: plan.weekday,
+        weekend: plan.weekend,
+        updatedAt: Date.now(),
+      });
+    } catch (error) {
+      console.error("Erro ao salvar plano de refeições:", error);
+      throw error;
+    }
+  },
+
+  async getSlotsForDay(dayOfWeek: number): Promise<MealSlot[]> {
+    const plan = await this.getMealPlan();
+    if (!plan) return getMealsForDay(dayOfWeek);
+    if (dayOfWeek >= 1 && dayOfWeek <= 5) return plan.weekday;
+    return plan.weekend;
   },
 };
 

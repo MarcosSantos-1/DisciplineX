@@ -3,8 +3,11 @@
 import { useState, useEffect } from "react";
 import { ACTIVITY_TEMPLATES, ActivityTemplate } from "@/types/meals";
 import { workoutService } from "@/lib/firebaseService";
-
-type ExerciseType = "strength" | "cardio" | "custom";
+import type {
+  ExerciseAlternative,
+  ExerciseSelection,
+  ExerciseType,
+} from "@/lib/workoutExercise";
 
 type Exercise = {
   id: string;
@@ -24,6 +27,8 @@ type Exercise = {
   activityTemplateId?: string;
   // Vídeo do YouTube
   videoUrl?: string;
+  alternative?: ExerciseAlternative;
+  selectedOption?: ExerciseSelection;
 };
 
 type WorkoutDay = {
@@ -64,6 +69,73 @@ export default function TreinoConfigPage() {
     return obj;
   };
 
+  const createAlternativeExercise = (exercise: Exercise): ExerciseAlternative => {
+    if (exercise.type === "cardio") {
+      return {
+        name: "",
+        minutes: exercise.minutes,
+        averageSpeed: exercise.averageSpeed,
+        rest: exercise.rest,
+        intensity: exercise.intensity,
+        activityTemplateId: exercise.activityTemplateId,
+        videoUrl: exercise.videoUrl,
+      };
+    }
+
+    return {
+      name: "",
+      sets: exercise.sets,
+      reps: exercise.reps,
+      rest: exercise.rest,
+      weight: exercise.weight,
+      videoUrl: exercise.videoUrl,
+    };
+  };
+
+  const formatAlternativeForStorage = (alternative?: ExerciseAlternative) => {
+    if (!alternative) return undefined;
+
+    return {
+      name: alternative.name,
+      sets: typeof alternative.sets === "number" ? alternative.sets : (typeof alternative.sets === "string" ? parseInt(alternative.sets) || 0 : undefined),
+      reps: alternative.reps || "",
+      rest: alternative.rest,
+      weight: alternative.weight,
+      minutes: alternative.minutes,
+      averageSpeed: alternative.averageSpeed,
+      videoUrl: alternative.videoUrl,
+      intensity: alternative.intensity,
+      activityTemplateId: alternative.activityTemplateId,
+    };
+  };
+
+  const formatExerciseForStorage = (ex: Exercise) => {
+    const exercise: any = {
+      id: ex.id,
+      name: ex.name,
+      type: ex.type || "strength",
+      sets: typeof ex.sets === "number" ? ex.sets : (typeof ex.sets === "string" ? parseInt(ex.sets) || 0 : 0),
+      reps: ex.reps || "",
+      rest: ex.rest !== undefined ? ex.rest : (ex.type === "cardio" ? 30 : 60),
+      completed: false,
+      selectedOption: "primary",
+    };
+
+    if (ex.weight !== undefined) exercise.weight = ex.weight;
+    if (ex.minutes !== undefined) exercise.minutes = ex.minutes;
+    if (ex.averageSpeed !== undefined) exercise.averageSpeed = ex.averageSpeed;
+    if (ex.videoUrl) exercise.videoUrl = ex.videoUrl;
+    if (ex.intensity) exercise.intensity = ex.intensity;
+    if (ex.activityTemplateId) exercise.activityTemplateId = ex.activityTemplateId;
+
+    const formattedAlternative = formatAlternativeForStorage(ex.alternative);
+    if (formattedAlternative) {
+      exercise.alternative = formattedAlternative;
+    }
+
+    return exercise;
+  };
+
   useEffect(() => {
     const loadData = async () => {
       try {
@@ -102,6 +174,7 @@ export default function TreinoConfigPage() {
             completed: false,
             minutes: ex.minutes,
             intensity: ex.intensity,
+            selectedOption: "primary",
           };
         };
 
@@ -208,6 +281,20 @@ export default function TreinoConfigPage() {
                   intensity: ex.intensity || undefined,
                   activityTemplateId: ex.activityTemplateId || undefined,
                   sets: typeof ex.sets === "number" ? ex.sets : (typeof ex.sets === "string" ? parseInt(ex.sets) || 0 : 0),
+                  alternative: ex.alternative
+                    ? {
+                        ...ex.alternative,
+                        sets: typeof ex.alternative.sets === "number"
+                          ? ex.alternative.sets
+                          : (typeof ex.alternative.sets === "string" ? parseInt(ex.alternative.sets) || 0 : 0),
+                        reps: ex.alternative.reps || "",
+                        rest: ex.alternative.rest !== undefined ? ex.alternative.rest : (ex.type === "cardio" ? 30 : 60),
+                        videoUrl: ex.alternative.videoUrl || undefined,
+                        intensity: ex.alternative.intensity || undefined,
+                        activityTemplateId: ex.alternative.activityTemplateId || undefined,
+                      }
+                    : undefined,
+                  selectedOption: "primary",
                 })),
               });
             }
@@ -220,27 +307,7 @@ export default function TreinoConfigPage() {
         if (!firebaseConfig || Object.keys(firebaseConfig).length === 0) {
           const configToSave: Record<string, any> = {};
           workoutsMapFromMock.forEach((workout, day) => {
-            const exerciseData = workout.exercises.map((ex) => {
-              const exercise: any = {
-                id: ex.id,
-                name: ex.name,
-                type: ex.type || "strength",
-                sets: typeof ex.sets === "number" ? ex.sets : 0,
-                reps: ex.reps || "",
-                rest: ex.rest !== undefined ? ex.rest : (ex.type === "cardio" ? 30 : 60),
-                completed: false,
-              };
-              
-              // Adicionar campos opcionais apenas se existirem
-              if (ex.weight !== undefined) exercise.weight = ex.weight;
-              if (ex.minutes !== undefined) exercise.minutes = ex.minutes;
-              if (ex.averageSpeed !== undefined) exercise.averageSpeed = ex.averageSpeed;
-              if (ex.videoUrl) exercise.videoUrl = ex.videoUrl;
-              if (ex.intensity) exercise.intensity = ex.intensity;
-              if (ex.activityTemplateId) exercise.activityTemplateId = ex.activityTemplateId;
-              
-              return exercise;
-            });
+            const exerciseData = workout.exercises.map(formatExerciseForStorage);
             
             configToSave[day] = {
               dayOfWeek: workout.dayOfWeek,
@@ -271,27 +338,7 @@ export default function TreinoConfigPage() {
           if (needsUpdate) {
             const configToSave: Record<string, any> = {};
             workoutsMapFromMock.forEach((workout, day) => {
-              const exerciseData = workout.exercises.map((ex) => {
-                const exercise: any = {
-                  id: ex.id,
-                  name: ex.name,
-                  type: ex.type || "strength",
-                  sets: typeof ex.sets === "number" ? ex.sets : 0,
-                  reps: ex.reps || "",
-                  rest: ex.rest !== undefined ? ex.rest : (ex.type === "cardio" ? 30 : 60),
-                  completed: false,
-                };
-                
-                // Adicionar campos opcionais apenas se existirem
-                if (ex.weight !== undefined) exercise.weight = ex.weight;
-                if (ex.minutes !== undefined) exercise.minutes = ex.minutes;
-                if (ex.averageSpeed !== undefined) exercise.averageSpeed = ex.averageSpeed;
-                if (ex.videoUrl) exercise.videoUrl = ex.videoUrl;
-                if (ex.intensity) exercise.intensity = ex.intensity;
-                if (ex.activityTemplateId) exercise.activityTemplateId = ex.activityTemplateId;
-                
-                return exercise;
-              });
+              const exerciseData = workout.exercises.map(formatExerciseForStorage);
               
               configToSave[day] = {
                 dayOfWeek: workout.dayOfWeek,
@@ -339,6 +386,7 @@ export default function TreinoConfigPage() {
         minutes: 30,
         activityTemplateId: templateId,
         intensity: template.category === "walking" ? "leve" : template.category === "cycling" ? "moderado" : "intenso",
+        selectedOption: "primary",
       };
     } else if (type === "cardio") {
       newExercise = {
@@ -351,6 +399,7 @@ export default function TreinoConfigPage() {
         completed: false,
         minutes: 30,
         intensity: "moderado",
+        selectedOption: "primary",
       };
     } else {
       newExercise = {
@@ -361,6 +410,7 @@ export default function TreinoConfigPage() {
         reps: "10",
         rest: 60,
         completed: false,
+        selectedOption: "primary",
       };
     }
 
@@ -392,6 +442,63 @@ export default function TreinoConfigPage() {
       setWorkouts(updated);
       await saveWorkouts(updated);
     }
+  };
+
+  const handleAddAlternativeExercise = async (exerciseId: string) => {
+    const updated = new Map(workouts);
+    const workout = updated.get(selectedDay);
+    if (!workout) return;
+
+    workout.exercises = workout.exercises.map((ex) =>
+      ex.id === exerciseId
+        ? { ...ex, alternative: ex.alternative || createAlternativeExercise(ex) }
+        : ex
+    );
+
+    updated.set(selectedDay, workout);
+    setWorkouts(updated);
+    await saveWorkouts(updated);
+  };
+
+  const handleRemoveAlternativeExercise = async (exerciseId: string) => {
+    const updated = new Map(workouts);
+    const workout = updated.get(selectedDay);
+    if (!workout) return;
+
+    workout.exercises = workout.exercises.map((ex) =>
+      ex.id === exerciseId
+        ? { ...ex, alternative: undefined, selectedOption: "primary" }
+        : ex
+    );
+
+    updated.set(selectedDay, workout);
+    setWorkouts(updated);
+    await saveWorkouts(updated);
+  };
+
+  const handleUpdateAlternativeExercise = async (
+    exerciseId: string,
+    updates: Partial<ExerciseAlternative>
+  ) => {
+    const updated = new Map(workouts);
+    const workout = updated.get(selectedDay);
+    if (!workout) return;
+
+    workout.exercises = workout.exercises.map((ex) =>
+      ex.id === exerciseId
+        ? {
+            ...ex,
+            alternative: {
+              ...(ex.alternative || createAlternativeExercise(ex)),
+              ...updates,
+            },
+          }
+        : ex
+    );
+
+    updated.set(selectedDay, workout);
+    setWorkouts(updated);
+    await saveWorkouts(updated);
   };
 
   const handleDeleteExercise = async (exerciseId: string) => {
@@ -429,27 +536,7 @@ export default function TreinoConfigPage() {
       const config: Record<string, any> = {};
       workoutsToSave.forEach((workout, day) => {
         if (workout && workout.exercises) {
-          const exerciseData = workout.exercises.map((ex) => {
-            const exercise: any = {
-              id: ex.id,
-              name: ex.name,
-              type: ex.type || "strength",
-              sets: typeof ex.sets === "number" ? ex.sets : (typeof ex.sets === "string" ? parseInt(ex.sets) || 0 : 0),
-              reps: ex.reps || "",
-              rest: ex.rest !== undefined ? ex.rest : (ex.type === "cardio" ? 30 : 60),
-              completed: false, // Sempre false na configuração
-            };
-            
-            // Adicionar campos opcionais apenas se existirem
-            if (ex.weight !== undefined) exercise.weight = ex.weight;
-            if (ex.minutes !== undefined) exercise.minutes = ex.minutes;
-            if (ex.averageSpeed !== undefined) exercise.averageSpeed = ex.averageSpeed;
-            if (ex.videoUrl) exercise.videoUrl = ex.videoUrl;
-            if (ex.intensity) exercise.intensity = ex.intensity;
-            if (ex.activityTemplateId) exercise.activityTemplateId = ex.activityTemplateId;
-            
-            return exercise;
-          });
+          const exerciseData = workout.exercises.map(formatExerciseForStorage);
           
           config[day] = {
             dayOfWeek: workout.dayOfWeek,
@@ -584,7 +671,7 @@ export default function TreinoConfigPage() {
 
           {currentWorkout?.exercises.length === 0 ? (
             <p className="text-xs text-zinc-500 text-center py-8">
-              Nenhum exercício configurado. Clique em "+ Adicionar" para começar.
+              Nenhum exercício configurado. Clique em `+ Adicionar` para começar.
             </p>
           ) : (
             currentWorkout?.exercises.map((exercise) => (
@@ -602,12 +689,29 @@ export default function TreinoConfigPage() {
                   }`}>
                     {exercise.type === "strength" ? "💪 Força" : exercise.type === "cardio" ? "🏃 Cardio" : "📝 Personalizado"}
                   </span>
-                  <button
-                    onClick={() => handleDeleteExercise(exercise.id)}
-                    className="text-zinc-500 hover:text-red-400 text-xs"
-                  >
-                    ✕
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {exercise.alternative ? (
+                      <button
+                        onClick={() => handleRemoveAlternativeExercise(exercise.id)}
+                        className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-300 hover:bg-amber-500/20"
+                      >
+                        Remover alternativa
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleAddAlternativeExercise(exercise.id)}
+                        className="rounded-lg border border-jagger-500/30 bg-jagger-500/10 px-2 py-1 text-[10px] text-jagger-300 hover:bg-jagger-500/20"
+                      >
+                        + Alternativa
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleDeleteExercise(exercise.id)}
+                      className="text-zinc-500 hover:text-red-400 text-xs"
+                    >
+                      ✕
+                    </button>
+                  </div>
                 </div>
 
                 {exercise.type === "strength" ? (
@@ -801,6 +905,213 @@ export default function TreinoConfigPage() {
                         className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 focus:border-jagger-400/60 focus:outline-none"
                       />
                     </div>
+                  </div>
+                )}
+
+                {exercise.alternative && (
+                  <div className="rounded-2xl border border-dashed border-jagger-500/40 bg-jagger-500/5 p-3">
+                    <div className="mb-3">
+                      <p className="text-xs font-medium text-jagger-200">
+                        Opção alternativa
+                      </p>
+                      <p className="mt-1 text-[11px] text-zinc-400">
+                        Essa variação aparece na página de treino para você trocar o exercício principal no dia.
+                      </p>
+                    </div>
+
+                    {exercise.type === "strength" ? (
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <div className="sm:col-span-2">
+                          <label className="text-[10px] text-zinc-400 mb-1 block">
+                            Nome do Exercício Alternativo
+                          </label>
+                          <input
+                            type="text"
+                            value={exercise.alternative.name || ""}
+                            onChange={(e) =>
+                              handleUpdateAlternativeExercise(exercise.id, { name: e.target.value })
+                            }
+                            placeholder="Ex: Supino reto com halteres"
+                            className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 focus:border-jagger-400/60 focus:outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-zinc-400 mb-1 block">
+                            Séries
+                          </label>
+                          <input
+                            type="number"
+                            value={exercise.alternative.sets ?? ""}
+                            onChange={(e) =>
+                              handleUpdateAlternativeExercise(exercise.id, {
+                                sets: e.target.value ? Number(e.target.value) : undefined,
+                              })
+                            }
+                            className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 focus:border-jagger-400/60 focus:outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-zinc-400 mb-1 block">
+                            Repetições
+                          </label>
+                          <input
+                            type="text"
+                            value={exercise.alternative.reps || ""}
+                            onChange={(e) =>
+                              handleUpdateAlternativeExercise(exercise.id, { reps: e.target.value })
+                            }
+                            placeholder="Ex: 10-12"
+                            className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 focus:border-jagger-400/60 focus:outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-zinc-400 mb-1 block">
+                            Peso (kg)
+                          </label>
+                          <input
+                            type="number"
+                            step="0.5"
+                            value={exercise.alternative.weight || ""}
+                            onChange={(e) =>
+                              handleUpdateAlternativeExercise(exercise.id, {
+                                weight: e.target.value ? Number(e.target.value) : undefined,
+                              })
+                            }
+                            placeholder="Opcional"
+                            className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 focus:border-jagger-400/60 focus:outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-zinc-400 mb-1 block">
+                            Descanso (segundos)
+                          </label>
+                          <input
+                            type="number"
+                            value={exercise.alternative.rest ?? ""}
+                            onChange={(e) =>
+                              handleUpdateAlternativeExercise(exercise.id, {
+                                rest: e.target.value ? Number(e.target.value) : undefined,
+                              })
+                            }
+                            className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 focus:border-jagger-400/60 focus:outline-none"
+                          />
+                        </div>
+                        <div className="sm:col-span-2">
+                          <label className="text-[10px] text-zinc-400 mb-1 block">
+                            URL do Vídeo (YouTube)
+                          </label>
+                          <input
+                            type="url"
+                            value={exercise.alternative.videoUrl || ""}
+                            onChange={(e) =>
+                              handleUpdateAlternativeExercise(exercise.id, {
+                                videoUrl: e.target.value || undefined,
+                              })
+                            }
+                            placeholder="https://www.youtube.com/watch?v=..."
+                            className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 focus:border-jagger-400/60 focus:outline-none"
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <div className="sm:col-span-2">
+                          <label className="text-[10px] text-zinc-400 mb-1 block">
+                            Nome da Atividade Alternativa
+                          </label>
+                          <input
+                            type="text"
+                            value={exercise.alternative.name || ""}
+                            onChange={(e) =>
+                              handleUpdateAlternativeExercise(exercise.id, { name: e.target.value })
+                            }
+                            placeholder="Ex: Bike moderada"
+                            className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 focus:border-jagger-400/60 focus:outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-zinc-400 mb-1 block">
+                            Duração (minutos)
+                          </label>
+                          <input
+                            type="number"
+                            value={exercise.alternative.minutes || ""}
+                            onChange={(e) =>
+                              handleUpdateAlternativeExercise(exercise.id, {
+                                minutes: e.target.value ? Number(e.target.value) : undefined,
+                              })
+                            }
+                            className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 focus:border-jagger-400/60 focus:outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-zinc-400 mb-1 block">
+                            Velocidade Média (km/h)
+                          </label>
+                          <input
+                            type="number"
+                            step="0.1"
+                            value={exercise.alternative.averageSpeed || ""}
+                            onChange={(e) =>
+                              handleUpdateAlternativeExercise(exercise.id, {
+                                averageSpeed: e.target.value ? Number(e.target.value) : undefined,
+                              })
+                            }
+                            placeholder="Opcional"
+                            className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 focus:border-jagger-400/60 focus:outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-zinc-400 mb-1 block">
+                            Descanso (segundos)
+                          </label>
+                          <input
+                            type="number"
+                            value={exercise.alternative.rest ?? ""}
+                            onChange={(e) =>
+                              handleUpdateAlternativeExercise(exercise.id, {
+                                rest: e.target.value ? Number(e.target.value) : undefined,
+                              })
+                            }
+                            className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 focus:border-jagger-400/60 focus:outline-none"
+                          />
+                        </div>
+                        <div className="sm:col-span-2">
+                          <label className="text-[10px] text-zinc-400 mb-1 block">
+                            Intensidade
+                          </label>
+                          <select
+                            value={exercise.alternative.intensity || "moderado"}
+                            onChange={(e) =>
+                              handleUpdateAlternativeExercise(exercise.id, {
+                                intensity: e.target.value,
+                              })
+                            }
+                            className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 focus:border-jagger-400/60 focus:outline-none"
+                          >
+                            <option value="leve">Leve</option>
+                            <option value="moderado">Moderado</option>
+                            <option value="intenso">Intenso</option>
+                          </select>
+                        </div>
+                        <div className="sm:col-span-2">
+                          <label className="text-[10px] text-zinc-400 mb-1 block">
+                            URL do Vídeo (YouTube)
+                          </label>
+                          <input
+                            type="url"
+                            value={exercise.alternative.videoUrl || ""}
+                            onChange={(e) =>
+                              handleUpdateAlternativeExercise(exercise.id, {
+                                videoUrl: e.target.value || undefined,
+                              })
+                            }
+                            placeholder="https://www.youtube.com/watch?v=..."
+                            className="w-full rounded-lg border border-zinc-700/80 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-100 focus:border-jagger-400/60 focus:outline-none"
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

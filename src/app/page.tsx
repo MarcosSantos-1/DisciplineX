@@ -9,8 +9,7 @@ import { FastingTracker } from "@/components/FastingTracker";
 import { useRouter } from "next/navigation";
 import { useState, useEffect, useMemo } from "react";
 import { 
-  SelectedMeal, 
-  getMealsForDay, 
+  SelectedMeal,
   PhysicalActivity,
   calculateBMR,
   calculateAge,
@@ -97,8 +96,8 @@ async function calculateNutritionFromMeals(
   
   console.log("Parsing dateKey:", dateKey, "-> dayOfWeek:", dayOfWeek, "date:", date);
   
-  const meals = getMealsForDay(dayOfWeek);
-  console.log("Slots retornados por getMealsForDay:", meals.map(m => ({ id: m.id, name: m.name, optionsCount: m.options.length })));
+  const meals = await mealService.getSlotsForDay(dayOfWeek);
+  console.log("Slots para nutrição:", meals.map(m => ({ id: m.id, name: m.name, optionsCount: m.options.length })));
   
   let totalCalories = 0;
   let totalProtein = 0;
@@ -345,20 +344,7 @@ export default function Home() {
 
   return (
     <div className="flex flex-1 flex-col gap-4">
-      {/* Header */}
-      <header className="flex items-center justify-between gap-3">
-        <div>
-          <p className="text-xs uppercase tracking-[0.25em] text-jagger-300/80">
-            Dia de Operação
-          </p>
-          <h2 className="mt-1 text-2xl font-semibold text-zinc-50">
-            Painel Diário
-          </h2>
-          <p className="mt-1 text-xs text-zinc-400">
-            Complete as missões para aumentar o{" "}
-            <span className="text-jagger-300">Disciplinary Score</span>.
-          </p>
-        </div>
+      <header className=" items-center justify-between gap-3">
         <div className="hidden text-right text-xs text-zinc-400 sm:block">
           <p>Campanha atual</p>
           <p className="text-sm font-semibold text-emerald-400">
@@ -368,15 +354,7 @@ export default function Home() {
       </header>
 
       {/* Calendário Mensal */}
-      <MonthlyCalendar
-        days={monthDays}
-        onDayClick={setSelectedDate}
-        onAddSpecialCheck={(date) => {
-          // Abrir modal para adicionar check especial
-          setShowSpecialCheckModal(true);
-          setSpecialCheckDate(date);
-        }}
-      />
+      <MonthlyCalendar days={monthDays} onDayClick={setSelectedDate} />
 
       {/* Checklist disciplinar + nutrição */}
       <section className="grid flex-1 gap-3 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1.1fr)]">

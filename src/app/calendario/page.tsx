@@ -5,6 +5,7 @@ import { DailyChecklist } from "@/components/DailyChecklist";
 import { AddSpecialCheckModal } from "@/components/AddSpecialCheckModal";
 import { checklistService, workoutService } from "@/lib/firebaseService";
 import type { WorkoutDay } from "@/lib/firebaseService";
+import { getSelectedExercise, isCardioExercise } from "@/lib/workoutExercise";
 
 function getDaysInMonth(year: number, month: number): Date[] {
   const firstDay = new Date(year, month, 1);
@@ -260,7 +261,7 @@ export default function CalendarioPage() {
               }}
             >
               {/* Card de Missões do Dia */}
-              <div className="flex-shrink-0 w-full sm:w-[calc(100%-1rem)] md:w-1/2 snap-start">
+              <div className="shrink-0 w-full sm:w-[calc(100%-1rem)] md:w-1/2 snap-start">
                 <DailyChecklist 
                   date={selectedDate} 
                   onScoreChange={(score) => {
@@ -274,7 +275,7 @@ export default function CalendarioPage() {
               </div>
 
               {/* Card de Treinos do Dia */}
-              <div className="flex-shrink-0 w-full sm:w-[calc(100%-1rem)] md:w-1/2 snap-start">
+              <div className="shrink-0 w-full sm:w-[calc(100%-1rem)] md:w-1/2 snap-start">
                 <div className="glass-panel rounded-3xl p-4">
                   <div className="mb-3">
                     <h3 className="text-sm font-medium text-zinc-100">
@@ -300,10 +301,8 @@ export default function CalendarioPage() {
                       return (
                         <div className="space-y-2">
                           {completedExercises.map((exercise) => {
-                            const isCardio = exercise.type === "cardio" || 
-                              exercise.name.includes("🚶") || 
-                              exercise.name.includes("🏃") || 
-                              exercise.name.toLowerCase().includes("cardio");
+                            const selectedExercise = getSelectedExercise(exercise);
+                            const isCardio = isCardioExercise(exercise);
 
                             return (
                               <div
@@ -311,7 +310,7 @@ export default function CalendarioPage() {
                                 className="rounded-xl bg-emerald-500/10 border border-emerald-500/40 px-2.5 py-2"
                               >
                                 <p className="text-[11px] font-medium text-emerald-300 leading-tight">
-                                  {exercise.name}
+                                  {selectedExercise.name}
                                 </p>
                                 <div className="mt-1.5 flex flex-wrap gap-1 text-[10px] text-zinc-400">
                                   {!isCardio && exercise.weight && (
@@ -319,13 +318,13 @@ export default function CalendarioPage() {
                                       💪 {exercise.weight}kg
                                     </span>
                                   )}
-                                  {exercise.sets && (
+                                  {selectedExercise.sets && (
                                     <span className="rounded-md bg-zinc-900/60 px-1.5 py-0.5">
-                                      📊 {typeof exercise.sets === "string" 
-                                        ? exercise.sets 
-                                        : exercise.reps 
-                                          ? `${exercise.sets}x${exercise.reps}`
-                                          : exercise.sets.toString()}
+                                      📊 {typeof selectedExercise.sets === "string" 
+                                        ? selectedExercise.sets 
+                                        : selectedExercise.reps 
+                                          ? `${selectedExercise.sets}x${selectedExercise.reps}`
+                                          : selectedExercise.sets.toString()}
                                     </span>
                                   )}
                                   {isCardio && exercise.minutes && (

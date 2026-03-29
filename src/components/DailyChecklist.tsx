@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import type { ChecklistItem, DailyChecklist } from "@/types/meals";
+import type { ChecklistItem } from "@/types/meals";
 import { checklistService, workoutService } from "@/lib/firebaseService";
+import { isWorkoutDayCompleted } from "@/lib/workoutProgress";
 
 interface DailyChecklistProps {
   date: Date;
@@ -37,7 +38,6 @@ function distributeWeights(
 ): ChecklistItem[] {
   // Nos fins de semana, substituir "Treino concluído" por "Estudar"
   let itemsToUse = [...defaultItems];
-  const workoutIndex = itemsToUse.findIndex(item => item.id === "workout-completed");
   
   if (isWeekend) {
     // Remover "Treino concluído" do cálculo de score (mas manter na lista se existir)
@@ -122,14 +122,13 @@ export function DailyChecklist({ date, onScoreChange, onAddSpecialCheck }: Daily
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const [items, setItems] = useState<ChecklistItem[]>([]);
 
-  // Função para verificar se todos os treinos do dia foram completados
+  // Função para verificar se o dia de treino já conta como concluído
   const checkWorkoutCompleted = useCallback(async (dateKey: string): Promise<boolean> => {
     try {
       const workout = await workoutService.getWorkout(dateKey);
       if (!workout || !workout.exercises || workout.exercises.length === 0) return false;
-      
-      // Verificar se todos os exercícios foram completados
-      return workout.exercises.every((ex: any) => ex.completed === true);
+
+      return isWorkoutDayCompleted(workout.exercises);
     } catch (e) {
       return false;
     }
@@ -214,11 +213,8 @@ export function DailyChecklist({ date, onScoreChange, onAddSpecialCheck }: Daily
             console.log(`[DailyChecklist] Treino completado detectado, adicionando workout-completed`);
           }
         } else {
-          // Só remover se não estava salvo no Firebase (preservar estado manual)
-          if (!savedCheckedIds.has("workout-completed")) {
-            initialCheckedIds.delete("workout-completed");
-            console.log(`[DailyChecklist] Treino não completado e não estava salvo, removendo workout-completed`);
-          }
+          initialCheckedIds.delete("workout-completed");
+          console.log(`[DailyChecklist] Treino não completado, removendo workout-completed`);
         }
       } else {
         // Nos fins de semana, remover "workout-completed" do checkedIds
@@ -246,10 +242,7 @@ export function DailyChecklist({ date, onScoreChange, onAddSpecialCheck }: Daily
       if (customEvent.detail?.dateKey === dateKey) {
         // Verificar treino quando atualizar
         workoutService.getWorkout(dateKey).then((workout) => {
-          let workoutCompleted = false;
-          if (workout && workout.exercises && workout.exercises.length > 0) {
-            workoutCompleted = workout.exercises.every((ex: any) => ex.completed === true);
-          }
+          const workoutCompleted = isWorkoutDayCompleted(workout?.exercises);
           
           setCheckedIds(prev => {
             const newSet = new Set(prev);
@@ -369,13 +362,13 @@ export function DailyChecklist({ date, onScoreChange, onAddSpecialCheck }: Daily
   const specialItems = items.filter((item) => item.isSpecial);
 
   return (
-    <div className="glass-panel rounded-3xl p-4">
+    <div className="rounded-3xl border border-zinc-800/90 bg-zinc-950 p-3 md:p-4">
       <div className="mb-3 flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-medium text-zinc-100">
+          <h3 className="text-sm pt-2 pb-1 font-medium text-zinc-100">
             Missões do Dia
           </h3>
-          <p className="mt-0.5 text-xs text-zinc-400">
+          <p className="mt-0.5 pb-2 text-xs text-zinc-400">
             {date.toLocaleDateString("pt-BR", {
               weekday: "long",
               day: "numeric",
@@ -383,23 +376,25 @@ export function DailyChecklist({ date, onScoreChange, onAddSpecialCheck }: Daily
             })}
           </p>
         </div>
-        <button 
+        <button
+          type="button"
+          aria-label="Ajustar perguntas do checklist"
+          title="Ajustar perguntas"
           onClick={() => {
             if (typeof window !== "undefined") {
               window.location.href = "/perfil?tab=checklist-config";
             }
           }}
-          className="rounded-full border border-zinc-700/80 bg-zinc-950/60 px-3 py-1 text-[11px] text-zinc-300 hover:border-jagger-400/60 hover:text-jagger-100"
+          className="rounded-lg border border-zinc-700/80 bg-zinc-950 px-2.5 py-2 text-lg leading-none text-zinc-300 transition-colors hover:border-jagger-400/60 hover:text-jagger-100"
         >
-          Ajustar perguntas
+          ⚙️
         </button>
       </div>
 
       <div className="mt-3 space-y-2.5">
         {/* Checks padrão */}
-        {defaultItems.map((item, idx) => {
+        {defaultItems.map((item) => {
           const isWorkoutItem = item.id === "workout-completed";
-          const isStudyItem = item.id === "study";
           const isChecked = checkedIds.has(item.id);
           const isWorkoutCompleted = isWorkoutItem && isChecked;
           
@@ -411,10 +406,8 @@ export function DailyChecklist({ date, onScoreChange, onAddSpecialCheck }: Daily
           return (
             <label
               key={item.id}
-              className={`flex items-center gap-3 rounded-2xl px-3 py-2.5 text-xs transition-colors ${
-                isWorkoutItem 
-                  ? `cursor-not-allowed ${isWorkoutCompleted ? "bg-emerald-500/10 border border-emerald-500/30" : "bg-zinc-950/60"}`
-                  : "cursor-pointer bg-zinc-950/60 hover:bg-zinc-900/80"
+              className={`flex items-center gap-3 rounded-2xl bg-zinc-950 px-3 py-2.5 text-sm transition-colors ${
+                isWorkoutItem ? "cursor-not-allowed" : "cursor-pointer"
               }`}
             >
               <input
@@ -422,29 +415,33 @@ export function DailyChecklist({ date, onScoreChange, onAddSpecialCheck }: Daily
                 checked={isChecked}
                 onChange={() => handleToggle(item.id)}
                 disabled={isWorkoutItem}
-                className={`h-4 w-4 rounded border-zinc-600 bg-zinc-900 disabled:cursor-not-allowed ${
+                className={`h-4 w-4 shrink-0 rounded border-zinc-600 bg-zinc-900 disabled:cursor-not-allowed ${
                   isWorkoutCompleted 
-                    ? "text-emerald-400 accent-emerald-400 border-emerald-500/60" 
+                    ? "border-emerald-500/60 text-emerald-400 accent-emerald-400" 
                     : "text-emerald-400 accent-emerald-400"
                 }`}
               />
-            <div className="flex flex-col flex-1">
-              <span className={`${isWorkoutCompleted ? "text-emerald-300" : "text-zinc-100"}`}>
+            <div className="flex min-w-0 flex-1 flex-col">
+              <span
+                className={
+                  isChecked
+                    ? "text-zinc-500 line-through decoration-zinc-500"
+                    : "text-zinc-100"
+                }
+              >
                 {item.label}
               </span>
-              {(idx < 3 || (isWeekend && isStudyItem)) && (
-                <span className="text-[11px] text-zinc-500">
-                  Peso maior no score do dia.
-                </span>
-              )}
+
             </div>
             {item.weight > 0 && (
-              <span className={`text-[10px] ${isWorkoutCompleted ? "text-emerald-400/60" : "text-zinc-600"}`}>
+              <span
+                className={`shrink-0 text-[10px] ${isChecked ? "text-zinc-600 line-through decoration-zinc-600" : "text-zinc-600"}`}
+              >
                 {item.weight.toFixed(1)}pts
               </span>
             )}
             {isWorkoutItem && (
-              <span className={`text-[10px] italic ${isWorkoutCompleted ? "text-emerald-400" : "text-zinc-500"}`}>
+              <span className={`shrink-0 text-[10px] italic ${isWorkoutCompleted ? "text-zinc-500 line-through decoration-zinc-500" : "text-zinc-500"}`}>
                 {isWorkoutCompleted ? "✓ Concluído" : "(Automático)"}
               </span>
             )}
@@ -453,29 +450,41 @@ export function DailyChecklist({ date, onScoreChange, onAddSpecialCheck }: Daily
         })}
 
         {/* Checks especiais */}
-        {specialItems.map((item) => (
+        {specialItems.map((item) => {
+          const spChecked = checkedIds.has(item.id);
+          return (
           <div
             key={item.id}
-            className="flex items-center gap-3 rounded-2xl bg-jagger-500/10 border border-jagger-400/30 px-3 py-2.5 text-xs hover:bg-jagger-500/20 transition-colors"
+            className="flex items-center gap-3 rounded-2xl bg-zinc-950 px-3 py-2.5 text-xs transition-colors"
           >
-            <label className="flex cursor-pointer items-center gap-3 flex-1">
+            <label className="flex flex-1 cursor-pointer items-center gap-3">
               <input
                 type="checkbox"
-                checked={checkedIds.has(item.id)}
+                checked={spChecked}
                 onChange={() => handleToggle(item.id)}
-                className="h-4 w-4 rounded border-jagger-400/60 bg-zinc-900 text-jagger-400 accent-jagger-400"
+                className="h-4 w-4 shrink-0 rounded border-zinc-600 bg-zinc-900 text-zinc-300 accent-zinc-400"
               />
-              <div className="flex flex-col flex-1">
-                <span className="text-zinc-100 flex items-center gap-1.5">
-                  <span className="text-jagger-300">⭐</span>
+              <div className="flex min-w-0 flex-1 flex-col">
+                <span
+                  className={`flex items-center gap-1.5 ${
+                    spChecked
+                      ? "text-zinc-500 line-through decoration-zinc-500"
+                      : "text-zinc-100"
+                  }`}
+                >
+                  <span className="text-zinc-400">⭐</span>
                   {item.label}
                 </span>
-                <span className="text-[11px] text-jagger-400/80">
+                <span
+                  className={`text-[11px] ${spChecked ? "text-zinc-600 line-through decoration-zinc-600" : "text-zinc-500"}`}
+                >
                   Missão especial do dia
                 </span>
               </div>
               {item.weight > 0 && (
-                <span className="text-[10px] text-jagger-400/60">
+                <span
+                  className={`shrink-0 text-[10px] ${spChecked ? "text-zinc-600 line-through decoration-zinc-600" : "text-zinc-600"}`}
+                >
                   {item.weight.toFixed(1)}pts
                 </span>
               )}
@@ -529,53 +538,68 @@ export function DailyChecklist({ date, onScoreChange, onAddSpecialCheck }: Daily
               ✕
             </button>
           </div>
-        ))}
+          );
+        })}
       </div>
 
-      {onAddSpecialCheck && (
-        <button
-          onClick={onAddSpecialCheck}
-          className="mt-3 self-start rounded-full border border-dashed border-jagger-400/40 px-3 py-1.5 text-[11px] text-jagger-300 hover:border-jagger-400/60 hover:bg-jagger-500/10 transition-colors flex items-center gap-1.5"
-        >
-          <span>⭐</span>
-          <span>Adicionar missão especial</span>
-        </button>
-      )}
-
-      <div className="mt-4 flex items-center justify-between rounded-2xl bg-zinc-950/70 px-3 py-2 text-[11px] text-zinc-400">
-        <span>
-          🔥 Score de hoje:{" "}
+      <div className="mt-4 border-t border-zinc-800/90 pt-3 text-[11px] text-zinc-400">
+        <div className="flex items-center justify-between gap-2">
+          <span className="min-w-0 shrink">
+            🔥 Score de hoje:{" "}
+            <span
+              className={`font-semibold ${
+                score >= 80
+                  ? "text-emerald-300"
+                  : score >= 60
+                  ? "text-jagger-200"
+                  : "text-red-300"
+              }`}
+            >
+              {score} / 100
+            </span>
+          </span>
+          {onAddSpecialCheck && (
+            <button
+              type="button"
+              onClick={onAddSpecialCheck}
+              className="shrink-0 rounded-lg border border-dashed border-jagger-400/40 px-2 py-1.5 text-[10px] text-jagger-300 transition-colors hover:border-jagger-400/60 hover:bg-jagger-500/10 md:hidden"
+            >
+              <span className="flex items-center gap-1 whitespace-nowrap">
+                <span>⭐</span>
+                <span>Missão especial</span>
+              </span>
+            </button>
+          )}
           <span
-            className={`font-semibold ${
-              score >= 80
+            className={`hidden shrink-0 md:inline ${
+              score === 100
+                ? "text-emerald-400"
+                : score >= 80
                 ? "text-emerald-300"
                 : score >= 60
-                ? "text-jagger-200"
-                : "text-red-300"
+                ? "text-jagger-300"
+                : "text-red-400"
             }`}
           >
-            {score} / 100
-          </span>
-        </span>
-        <span
-          className={`hidden sm:inline ${
-            score === 100
-              ? "text-emerald-400"
+            {score === 100
+              ? "Missão completa!"
               : score >= 80
-              ? "text-emerald-300"
+              ? "Quase lá!"
               : score >= 60
-              ? "text-jagger-300"
-              : "text-red-400"
-          }`}
-        >
-          {score === 100
-            ? "Missão completa!"
-            : score >= 80
-            ? "Quase lá!"
-            : score >= 60
-            ? "Bom progresso"
-            : "Continue!"}
-        </span>
+              ? "Bom progresso"
+              : "Continue!"}
+          </span>
+        </div>
+        {onAddSpecialCheck && (
+          <button
+            type="button"
+            onClick={onAddSpecialCheck}
+            className="mt-2 hidden w-full rounded-lg border border-dashed border-jagger-400/40 px-3 py-2 text-[11px] text-jagger-300 transition-colors hover:border-jagger-400/60 hover:bg-jagger-500/10 md:flex md:items-center md:justify-center md:gap-1.5"
+          >
+            <span>⭐</span>
+            <span>Adicionar missão especial</span>
+          </button>
+        )}
       </div>
     </div>
   );

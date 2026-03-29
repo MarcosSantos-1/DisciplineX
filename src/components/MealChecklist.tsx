@@ -18,10 +18,28 @@ export function MealChecklist({ selectedDate }: MealChecklistProps) {
   const [showSlotSelector, setShowSlotSelector] = useState(false);
   const [pendingSelection, setPendingSelection] = useState<{ type: "recipe" | "quickfood"; item: Recipe | QuickFood } | null>(null);
   const [customOptionsMap, setCustomOptionsMap] = useState<Map<string, MealOption[]>>(new Map());
-  
   const dayOfWeek = selectedDate.getDay();
-  const meals = getMealsForDay(dayOfWeek);
   const dateKey = selectedDate.toISOString().split("T")[0];
+  const [meals, setMeals] = useState<MealSlot[]>(() => getMealsForDay(dayOfWeek));
+
+  useEffect(() => {
+    let cancelled = false;
+    setMeals(getMealsForDay(dayOfWeek));
+    mealService.getSlotsForDay(dayOfWeek).then((slots) => {
+      if (!cancelled) setMeals(slots);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [dayOfWeek]);
+
+  useEffect(() => {
+    const onPlan = () => {
+      mealService.getSlotsForDay(dayOfWeek).then(setMeals);
+    };
+    window.addEventListener("mealPlanUpdated", onPlan);
+    return () => window.removeEventListener("mealPlanUpdated", onPlan);
+  }, [dayOfWeek]);
 
   // Carregar refeições selecionadas do Firebase
   useEffect(() => {
@@ -284,26 +302,28 @@ export function MealChecklist({ selectedDate }: MealChecklistProps) {
 
   return (
     <>
-      <div className="glass-panel flex flex-col rounded-3xl p-4">
-        <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-col rounded-3xl border border-zinc-800/90 bg-zinc-950 p-3 md:p-4">
+        <div className="flex items-start justify-between gap-2">
           <div>
-            <h3 className="text-sm font-medium text-zinc-100">
-              Refeições 
-            </h3>
-            <p className="text-[11px] text-zinc-400">
+            <h3 className="pt-2 text-sm font-medium text-zinc-100">Refeições</h3>
+            <p className="pb-2 text-[11px] text-zinc-400">
               {dayOfWeek >= 1 && dayOfWeek <= 5
                 ? "4 refeições principais de segunda a sexta"
                 : "3 refeições normais no fim de semana"}
             </p>
           </div>
           <button
+            type="button"
+            aria-label="Configurar refeições"
+            title="Configurar refeições"
             onClick={() => {
-              setLibrarySlotId(null);
-              setShowLibrary(true);
+              if (typeof window !== "undefined") {
+                window.location.href = "/perfil?tab=meal-config";
+              }
             }}
-            className="rounded-full border border-zinc-700/80 bg-zinc-950/60 px-3 py-1 text-[11px] text-zinc-300 hover:border-jagger-400/60 hover:text-jagger-100"
+            className="shrink-0 rounded-lg border border-zinc-800/90 bg-zinc-950 px-2.5 py-2 text-lg leading-none text-zinc-300 transition-colors hover:border-jagger-400/60 hover:text-jagger-100"
           >
-            Ver Arsenal ⚔️
+            ⚙️
           </button>
         </div>
 
@@ -315,10 +335,10 @@ export function MealChecklist({ selectedDate }: MealChecklistProps) {
             return (
               <div
                 key={slot.id}
-                className={`flex flex-col gap-2 rounded-2xl p-3 text-xs transition-colors ${
+                className={`flex flex-col gap-2 rounded-2xl border p-3 text-xs transition-colors ${
                   hasSelections
-                    ? "bg-emerald-500/10 border border-emerald-500/20"
-                    : "bg-zinc-950/60 hover:bg-zinc-900/80 cursor-pointer"
+                    ? "cursor-pointer border-emerald-500/25 bg-emerald-500/10"
+                    : "cursor-pointer border-zinc-800/90 bg-zinc-950 hover:border-zinc-700"
                 }`}
                 onClick={() => setOpenModalSlot(slot.id)}
               >
@@ -350,7 +370,7 @@ export function MealChecklist({ selectedDate }: MealChecklistProps) {
                       return (
                         <div
                           key={`${selectedMeal.slotId}-${selectedMeal.optionId}`}
-                          className="rounded-xl bg-zinc-950/60 p-2.5 border border-zinc-800/50"
+                          className="rounded-xl border border-zinc-800/90 bg-zinc-950 p-2.5"
                           onClick={(e) => e.stopPropagation()}
                         >
                           <div className="flex items-start justify-between gap-2">
@@ -415,14 +435,25 @@ export function MealChecklist({ selectedDate }: MealChecklistProps) {
           })}
         </div>
 
-        <button
-          onClick={() => {
-            setShowSlotSelector(true);
-          }}
-          className="mt-3 self-start rounded-full border border-dashed border-zinc-700 px-3 py-1.5 text-[11px] text-zinc-400 hover:border-jagger-400/60 hover:text-jagger-100"
-        >
-          + Adicionar refeição / receita
-        </button>
+        <div className="mt-3 flex w-full items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={() => setShowSlotSelector(true)}
+            className="rounded-full border border-dashed border-zinc-800/90 px-3 py-1.5 text-[11px] text-zinc-400 transition-colors hover:border-jagger-400/60 hover:text-jagger-100"
+          >
+            + Adicionar refeição / receita
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setLibrarySlotId(null);
+              setShowLibrary(true);
+            }}
+            className="shrink-0 rounded-full border border-zinc-800/90 bg-zinc-950 px-3 py-1.5 text-[11px] text-zinc-300 transition-colors hover:border-jagger-400/60 hover:text-jagger-100"
+          >
+            Ver Arsenal ⚔️
+          </button>
+        </div>
       </div>
 
       {openModalSlot && openModalSlot !== "library" && (() => {
